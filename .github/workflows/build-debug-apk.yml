@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-debug-apk-${{ github.ref }}
@@ -53,3 +53,17 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: 发布为 Release（便于手机直接下载安装）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          apk="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          test -s "$apk"
+          gh release create ubuntu-preview "$apk" \
+            --repo "${{ github.repository }}" \
+            --title "Ubuntu 环境支持预览版" \
+            --target "${{ github.sha }}" \
+            --clobber \
+            --notes "含 Ubuntu 25.04(plucky) 终端环境支持与 DEB822 源清理修复的 debug 构建，仅用于真机验证。"
