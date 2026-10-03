@@ -126,8 +126,9 @@ class DshPluginCatalogTest {
     fun probeScriptCoversEveryEntryExactlyOnce() {
         val script = DshPluginCatalog.probeScript()
         DshPluginCatalog.ENTRIES.forEach { entry ->
-            // 脚本里是 `printf 'ETA_PLUGIN %s\n' <id>`，占位符由 shell 在运行时替换。
-            val line = "printf '${DshPluginCatalog.PROBE_LINE_PREFIX} %s\\\\n' ${entry.id}"
+            // 脚本里是 `printf 'ETA_PLUGIN %s\n' <id>`，占位符由 shell 在运行时替换；
+            // Kotlin 里 `\\n` 才是脚本里那一个反斜杠加 n。
+            val line = "printf '${DshPluginCatalog.PROBE_LINE_PREFIX} %s\\n' ${entry.id}"
             assertEquals(
                 "条目 ${entry.id} 的探测分支应恰好出现一次",
                 1,
