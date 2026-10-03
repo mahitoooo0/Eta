@@ -29,7 +29,8 @@ class LinuxPackageProfilesTest {
         assertNotNull(script)
         requireNotNull(script)
 
-        assertTrue(script.contains("--registry=https://registry.npmmirror.com"))
+        // 两次 npm 安装都必须走镜像源：官方 registry 在墙内不可达，重试换源没有意义。
+        assertEquals(2, Regex("--registry=https://registry.npmmirror.com").findAll(script).count())
         // koffi 取不到预编译二进制时要退回源码编译，脚本需先补工具链再重试安装。
         assertTrue(script.contains("cmake"))
         assertTrue(script.contains("/usr/local/bin/eta-apt install"))
