@@ -136,6 +136,10 @@ internal object RootlessLinuxInstaller {
                 LinuxDistribution.UBUNTU -> {
                     val mirror = UbuntuEnvironmentInstaller.APT_MIRRORS.first()
                     val sourcePath = UbuntuEnvironmentInstaller.aptSourcePath()
+                    // Ubuntu 24.04+ 的 DEB822 源指向官方站，必须清掉，只保留镜像版 sources.list。
+                    File(staging, "etc/apt/sources.list.d").listFiles()
+                        ?.filter { it.name.endsWith(".sources") }
+                        ?.forEach { it.delete() }
                     File(staging, "etc/apt/sources.list").writeText(
                         UbuntuEnvironmentInstaller.sourcesListEntries(sourcePath, mirror).joinToString("\n") + "\n",
                     )
