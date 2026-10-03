@@ -28,6 +28,7 @@ import io.github.mangi.eta.agent.terminal.DshPluginCategory
 import io.github.mangi.eta.agent.terminal.DshPluginEntry
 import io.github.mangi.eta.agent.terminal.DshPluginFailure
 import io.github.mangi.eta.agent.terminal.DshPluginInstaller
+import io.github.mangi.eta.agent.terminal.DshPluginProbeException
 import io.github.mangi.eta.agent.terminal.DshPluginProbeFailure
 import io.github.mangi.eta.agent.terminal.DshPluginResult
 import io.github.mangi.eta.agent.terminal.DshPluginCatalog
@@ -68,10 +69,11 @@ internal fun DshPluginLibrarySheet(
         result.onSuccess { installed = it }
         result.onFailure { error ->
             probed = false
-            messageRes = when ((error as? Pair<*, *>)?.first) {
+            messageRes = when ((error as? DshPluginProbeException)?.reason) {
                 DshPluginProbeFailure.DSH_NOT_READY -> R.string.linux_dsh_plugin_dsh_not_ready
                 else -> R.string.linux_dsh_plugin_probe_failed
             }
+            messageDetail = (error as? DshPluginProbeException)?.detail?.ifBlank { null }
         }
         probed = true
     }

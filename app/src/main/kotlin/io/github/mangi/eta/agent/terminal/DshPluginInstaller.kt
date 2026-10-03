@@ -27,6 +27,12 @@ internal enum class DshPluginProbeFailure {
     SHELL_FAILED,
 }
 
+/** 探测失败时抛出，携带原因与命令输出尾部。 */
+internal class DshPluginProbeException(
+    val reason: DshPluginProbeFailure,
+    val detail: String,
+) : Exception("dsh plugin probe failed: $reason")
+
 internal sealed interface DshPluginResult {
     data class Succeeded(val output: String) : DshPluginResult
     data class Failed(val reason: DshPluginFailure, val output: String = "") : DshPluginResult
@@ -60,7 +66,7 @@ internal class DshPluginInstaller(
     suspend fun probeInstalled(): Result<Set<String>> = installMutex.withLock {
         withContext(Dispatchers.IO) {
             if (!dshReady()) {
-                return@withContext Result.failure(DshPluginProbeFailure.DSH_NOT_READY)
+                return@withContext Result.failure(DshPluginProbeException(DshPluginProbeFailure.DSH_NOT_READY, ""))
             }
             val result = run(DshPluginCatalog.probeScript(), PROBE_TIMEOUT_SECONDS)
             if (result.exitCode != 0) {
@@ -69,7 +75,10 @@ internal class DshPluginInstaller(
                         "outputChars=${result.output.length}",
                 )
                 return@withContext Result.failure(
-                    DshPluginProbeFailure.SHELL_FAILED to result.output.takeLast(200),
+                    DshPluginProbeException(
+                        DshPluginProbeFailure.SHELL_FAILED,
+                        result.output.takeLast(200),
+                    ),
                 )
             }
             Result.success(parseProbeOutput(result.output))

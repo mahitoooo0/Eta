@@ -47,9 +47,6 @@ internal data class DshPluginEntry(
     /** 需要用户自备凭据（如 GitHub token），UI 上要显式提示。 */
     val requiresToken: Boolean = false,
 ) {
-    /** 技能安装时写进 SKILL.md 的归属标记；探测与卸载都靠它避免误删用户自己写的同名技能。 */
-    const val SKILL_OWNER_MARKER = "managed-by: eta-plugin-library"
-
     init {
         require(id.isNotBlank()) { "plugin id must not be blank" }
         // 分类与安装方式必须一一对应；漂移会让 UI 归类与实际安装行为不一致。
@@ -82,6 +79,9 @@ internal data class DshPluginEntry(
  */
 internal object DshPluginCatalog {
     const val MIRROR_REGISTRY = "https://registry.npmmirror.com"
+
+    /** 技能安装时写进 SKILL.md 的归属标记；探测与卸载都靠它避免误删用户自己写的同名技能。 */
+    const val SKILL_OWNER_MARKER = "managed-by: eta-plugin-library"
 
     /** dsh 的目标 profile；与用户手动执行 `dsh web` 时用的保持一致。 */
     const val PROFILE = "web"
