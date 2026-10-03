@@ -249,7 +249,7 @@ internal object DshPluginCatalog {
             append("  npm install -g --prefix /usr/local --registry=").append(MIRROR_REGISTRY).append(" pnpm\n")
             append("fi\n")
             // 没装过就别去 remove，避免 pnpm 因找不到依赖报错导致整个卸载失败。
-            append("if grep -q '").append(pkg).append("' \"$HOME/.dsh/profiles/")
+            append("if grep -q '").append(pkg).append("' \"${'$'}HOME/.dsh/profiles/")
                 .append(PROFILE).append("/package.json\" 2>/dev/null; then\n")
             append("  dsh plugin --profile ").append(PROFILE).append(" remove ").append(pkg).append('\n')
             append("fi\n")
@@ -268,10 +268,10 @@ internal object DshPluginCatalog {
             append("set -e\n")
             append(mcpRemoveBlockCommand(server))
             append(mcpFileCommand())
-            append("cat >> \"$HOME/.dsh/cordis.patch.yml\" <<'ETA_MCP_EOF'\n")
+            append("cat >> \"${'$'}HOME/.dsh/cordis.patch.yml\" <<'ETA_MCP_EOF'\n")
             append(block)
             append("ETA_MCP_EOF\n")
-            append("grep -q 'eta-mcp-").append(server).append("' \"$HOME/.dsh/cordis.patch.yml\"\n")
+            append("grep -q 'eta-mcp-").append(server).append("' \"${'$'}HOME/.dsh/cordis.patch.yml\"\n")
         }.also { require(pkg.isNotBlank()) }
     }
 
@@ -282,15 +282,15 @@ internal object DshPluginCatalog {
             append(mcpRemoveBlockCommand(server))
             append(mcpFileCommand())
             append("if grep -q 'eta-mcp-").append(server)
-                .append("' \"$HOME/.dsh/cordis.patch.yml\"; then exit 1; fi\n")
+                .append("' \"${'$'}HOME/.dsh/cordis.patch.yml\"; then exit 1; fi\n")
         }
     }
 
     private fun mcpRemoveBlockCommand(server: String): String =
-        "sed -i '/^# >>> eta mcp $server >>>$/,/^# <<< eta mcp $server <<<$/{d}' \"$HOME/.dsh/cordis.patch.yml\" 2>/dev/null || true\n"
+        "sed -i '/^# >>> eta mcp $server >>>$/,/^# <<< eta mcp $server <<<$/{d}' \"${'$'}HOME/.dsh/cordis.patch.yml\" 2>/dev/null || true\n"
 
     private fun mcpFileCommand(): String =
-        "mkdir -p \"$HOME/.dsh\" && { [ -f \"$HOME/.dsh/cordis.patch.yml\" ] || : > \"$HOME/.dsh/cordis.patch.yml\"; }\n"
+        "mkdir -p \"${'$'}HOME/.dsh\" && { [ -f \"${'$'}HOME/.dsh/cordis.patch.yml\" ] || : > \"${'$'}HOME/.dsh/cordis.patch.yml\"; }\n"
 
     private fun mcpBlock(entry: DshPluginEntry): String {
         val pkg = requireNotNull(entry.packageName)
@@ -324,11 +324,11 @@ internal object DshPluginCatalog {
         val body = requireNotNull(entry.skillBody)
         return buildString {
             append("set -e\n")
-            append("mkdir -p \"$HOME/.dsh/skills/").append(dir).append("\"\n")
-            append("cat > \"$HOME/.dsh/skills/").append(dir).append("/SKILL.md\" <<'ETA_SKILL_EOF'\n")
+            append("mkdir -p \"${'$'}HOME/.dsh/skills/").append(dir).append("\"\n")
+            append("cat > \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\" <<'ETA_SKILL_EOF'\n")
             append(body)
             append("ETA_SKILL_EOF\n")
-            append("test -s \"$HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
+            append("test -s \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
         }
     }
 
@@ -337,8 +337,8 @@ internal object DshPluginCatalog {
         val dir = requireNotNull(entry.skillDirName)
         return buildString {
             append("set -e\n")
-            append("rm -f \"$HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
-            append("rmdir \"$HOME/.dsh/skills/").append(dir).append("\" 2>/dev/null || true\n")
+            append("rm -f \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
+            append("rmdir \"${'$'}HOME/.dsh/skills/").append(dir).append("\" 2>/dev/null || true\n")
         }
     }
 
@@ -364,11 +364,11 @@ internal object DshPluginCatalog {
 
     private fun probeCommand(entry: DshPluginEntry): String = when (entry.installKind) {
         DshPluginInstallKind.DSH_PLUGIN -> "grep -q '${requireNotNull(entry.packageName)}' " +
-            "\"$HOME/.dsh/profiles/$PROFILE/package.json\""
+            "\"${'$'}HOME/.dsh/profiles/$PROFILE/package.json\""
         DshPluginInstallKind.MCP_SERVER ->
-            "grep -q 'eta-mcp-${requireNotNull(entry.serverName)}' \"$HOME/.dsh/cordis.patch.yml\""
+            "grep -q 'eta-mcp-${requireNotNull(entry.serverName)}' \"${'$'}HOME/.dsh/cordis.patch.yml\""
         DshPluginInstallKind.SKILL_FILE ->
-            "test -s \"$HOME/.dsh/skills/${requireNotNull(entry.skillDirName)}/SKILL.md\""
+            "test -s \"${'$'}HOME/.dsh/skills/${requireNotNull(entry.skillDirName)}/SKILL.md\""
         DshPluginInstallKind.NPM_GLOBAL -> "command -v ${requireNotNull(entry.commandName)}"
     }
 }

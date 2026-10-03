@@ -1116,6 +1116,11 @@
   <string name="linux_dsh_tools">DeepSeek Harness</string>
   <string name="linux_dsh_tools_summary">Install the latest DeepSeek Harness (dsh) via npm; requires the Node.js environment first</string>
   <string name="linux_dsh_tools_ready">DeepSeek Harness is ready; run dsh in the terminal</string>
+  <string name="linux_dsh_web_failed_start">Could not start dsh Web</string>
+  <string name="linux_dsh_web_failed_port">dsh Web did not open port 3080 in time; the first start can be slow, try again</string>
+  <string name="linux_dsh_web_failed_browser">No browser available</string>
+  <string name="linux_dsh_web_failed_env">Linux environment is not ready</string>
+  <string name="linux_dsh_web_failed_root">Root access is required</string>
   <string name="linux_dsh_plugin_busy">Working</string>
   <string name="linux_dsh_plugin_library">Plugin Library</string>
   <string name="linux_dsh_plugin_open">Plugins</string>

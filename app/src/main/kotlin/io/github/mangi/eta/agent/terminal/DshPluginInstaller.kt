@@ -49,7 +49,7 @@ internal class DshPluginInstaller(
      * 用固定前缀的行标记解析结果。
      */
     suspend fun probeInstalled(): Result<Set<String>> = withContext(Dispatchers.IO) {
-        if (!dshReady()) return@withContext Result.failure(DshPluginNotReadyException)
+        if (!dshReady()) return@withContext Result.failure(IllegalStateException("dsh is not installed"))
         val result = run(DshPluginCatalog.probeScript(), PROBE_TIMEOUT_SECONDS)
         val ids = parseProbeOutput(result.output)
         if (result.exitCode != 0) {
@@ -57,7 +57,9 @@ internal class DshPluginInstaller(
                 "Dsh plugin probe outcome=failed exitCode=${result.exitCode} " +
                     "outputChars=${result.output.length}",
             )
-            return@withContext Result.failure(DshPluginProbeException(result.output.takeLast(400)))
+            return@withContext Result.failure(
+                IllegalStateException("dsh plugin probe failed: ${result.output.takeLast(200)}"),
+            )
         }
         Result.success(ids)
     }
@@ -111,10 +113,6 @@ internal class DshPluginInstaller(
         }
         .filter { DshPluginCatalog.byId(it) != null }
         .toSet()
-
-    private object DshPluginNotReadyException : Exception("dsh is not installed")
-
-    private object DshPluginProbeException : Exception("dsh plugin probe failed")
 
     private companion object {
         val installMutex = Mutex()

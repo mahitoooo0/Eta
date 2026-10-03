@@ -1131,6 +1131,11 @@
   <string name="linux_dsh_tools">DeepSeek Harness</string>
   <string name="linux_dsh_tools_summary">通过 npm 安装最新版 DeepSeek Harness（dsh）；需要先安装 Node.js 环境</string>
   <string name="linux_dsh_tools_ready">DeepSeek Harness 已就绪，在终端运行 dsh 即可开始</string>
+  <string name="linux_dsh_web_failed_start">无法启动 dsh Web</string>
+  <string name="linux_dsh_web_failed_port">dsh Web 未能在预期时间内监听 3080 端口；首次启动较慢，请稍后再试</string>
+  <string name="linux_dsh_web_failed_browser">没有可用浏览器</string>
+  <string name="linux_dsh_web_failed_env">Linux 环境尚未就绪</string>
+  <string name="linux_dsh_web_failed_root">需要 Root 权限</string>
   <string name="linux_dsh_plugin_busy">处理中</string>
   <string name="linux_dsh_plugin_library">插件库</string>
   <string name="linux_dsh_plugin_open">插件</string>
