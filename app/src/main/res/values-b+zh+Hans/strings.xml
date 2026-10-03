@@ -1098,6 +1098,9 @@
   <string name="linux_distribution_debian_summary">软件兼容性更好的 glibc 环境</string>
   <string name="linux_distribution_ubuntu">Ubuntu</string>
   <string name="linux_distribution_ubuntu_summary">软件包覆盖最广的 Ubuntu glibc 环境</string>
+  <string name="linux_ubuntu_already_ready">Ubuntu glibc 环境已经就绪</string>
+  <string name="linux_ubuntu_base_install_complete">Ubuntu %1$s 基础环境安装完成</string>
+  <string name="linux_ubuntu_install_complete">Ubuntu %1$s 与常用工具安装完成</string>
   <string name="linux_install_base">安装基础环境</string>
   <string name="linux_install_base_tools">安装基础工具</string>
   <string name="linux_upgrade_tools">升级工具</string>
