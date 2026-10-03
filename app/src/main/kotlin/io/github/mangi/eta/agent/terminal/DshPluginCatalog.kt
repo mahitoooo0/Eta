@@ -261,7 +261,6 @@ internal object DshPluginCatalog {
      * 每个服务器占一对独立标记，卸载时按标记整段删除，不碰用户自己写的部分。
      */
     private fun mcpInstallScript(entry: DshPluginEntry): String {
-        val pkg = requireNotNull(entry.packageName)
         val server = requireNotNull(entry.serverName)
         val block = mcpBlock(entry)
         return buildString {
@@ -272,7 +271,7 @@ internal object DshPluginCatalog {
             append(block)
             append("ETA_MCP_EOF\n")
             append("grep -q 'eta-mcp-").append(server).append("' \"${'$'}HOME/.dsh/cordis.patch.yml\"\n")
-        }.also { require(pkg.isNotBlank()) }
+        }
     }
 
     private fun mcpUninstallScript(entry: DshPluginEntry): String {
@@ -289,8 +288,18 @@ internal object DshPluginCatalog {
     private fun mcpRemoveBlockCommand(server: String): String =
         "sed -i '/^# >>> eta mcp $server >>>$/,/^# <<< eta mcp $server <<<$/{d}' \"${'$'}HOME/.dsh/cordis.patch.yml\" 2>/dev/null || true\n"
 
+    /**
+     * 确保文件存在**且以换行结尾**。
+     *
+     * 少了这一步，用户文件末尾若没有换行，`cat >>` 会把托管块接到最后一行屁股上，
+     * 直接把用户配置写坏（YAML 结构被拼坏，dsh 启动时报 patch 解析失败）。
+     */
     private fun mcpFileCommand(): String =
-        "mkdir -p \"${'$'}HOME/.dsh\" && { [ -f \"${'$'}HOME/.dsh/cordis.patch.yml\" ] || : > \"${'$'}HOME/.dsh/cordis.patch.yml\"; }\n"
+        "mkdir -p \"${'$'}HOME/.dsh\"\n" +
+            "f=\"${'$'}HOME/.dsh/cordis.patch.yml\"\n" +
+            "[ -f \"\$f\" ] || : > \"\$f\"\n" +
+            // tail -c1 的 wc -l 为 0 表示最后一个字节不是换行
+            "if [ -s \"\$f\" ] && [ \"\$(tail -c1 \"\$f\" | wc -l)\" -eq 0 ]; then printf '\\n' >> \"\$f\"; fi\n"
 
     private fun mcpBlock(entry: DshPluginEntry): String {
         val pkg = requireNotNull(entry.packageName)
