@@ -38,6 +38,7 @@ import io.github.mangi.eta.agent.terminal.DebianInstallProgress
 import io.github.mangi.eta.agent.terminal.DebianInstallResult
 import io.github.mangi.eta.agent.terminal.DebianInstallStage
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
+import io.github.mangi.eta.agent.terminal.DshPluginInstaller
 import io.github.mangi.eta.agent.terminal.LinuxApkAnalysisInstaller
 import io.github.mangi.eta.agent.terminal.LinuxDistribution
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
@@ -59,6 +60,9 @@ import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
 import io.github.mangi.eta.ui.app.KimiWebLaunchResult
 import io.github.mangi.eta.ui.app.KimiWebLauncher
+import io.github.mangi.eta.ui.app.DshWebLaunchResult
+import io.github.mangi.eta.ui.app.DshWebLauncher
+import io.github.mangi.eta.ui.app.dshWebMessage
 import io.github.mangi.eta.ui.app.launchForegroundExecution
 import io.github.mangi.eta.ui.app.message
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
@@ -209,6 +213,27 @@ internal fun LinuxEnvironmentScreen(
             ),
         )
     }
+    var dshWebLaunching by remember { mutableStateOf(false) }
+    var dshWebRunning by remember(selectedDistribution, backend) { mutableStateOf(false) }
+    var showDshPluginSheet by remember { mutableStateOf(false) }
+    val dshPluginInstaller = remember(appContext, selectedDistribution) {
+        DshPluginInstaller(context = appContext, distribution = selectedDistribution)
+    }
+    val dshWebLauncher = remember(appContext) {
+        DshWebLauncher(
+            context = appContext,
+            daemonSupervisor = DetachedTaskSupervisor(
+                logger = AndroidAgentLogger,
+                recordsFile = DetachedTaskSupervisor.defaultRecordsFile(appContext),
+                linuxRootfsPathProvider = { environment ->
+                    environment.linuxDistribution?.let { distribution ->
+                        LinuxEnvironmentPaths.rootfsDir(appContext, distribution).absolutePath
+                    }
+                },
+                linuxSharedMountsProvider = { SharedFolderMounts.current() },
+            ),
+        )
+    }
     LaunchedEffect(selectedDistribution, backend, installer, debianInstaller, ubuntuInstaller) {
         status = installer.status()
         debianStatus = debianInstaller.status()
@@ -219,6 +244,11 @@ internal fun LinuxEnvironmentScreen(
     LaunchedEffect(selectedDistribution, backend, kimiWebLaunching) {
         if (!kimiWebLaunching) {
             kimiWebRunning = kimiWebLauncher.status(selectedDistribution.terminalEnvironment).running
+        }
+    }
+    LaunchedEffect(selectedDistribution, backend, dshWebLaunching) {
+        if (!dshWebLaunching) {
+            dshWebRunning = dshWebLauncher.status(selectedDistribution.terminalEnvironment).running
         }
     }
     val selectedBaseReady = when (selectedDistribution) {
@@ -327,6 +357,21 @@ internal fun LinuxEnvironmentScreen(
             kimiWebLaunching = false
             if (result is KimiWebLaunchResult.Failed) {
                 resultMessage = result.message(context)
+            }
+        }
+    }
+
+    fun launchDshWeb() {
+        if (dshWebLaunching || requiresRoot) return
+        requestExecutionNotifications()
+        dshWebLaunching = true
+        resultMessage = null
+        coroutineScope.launch {
+            val result = dshWebLauncher.launch(selectedDistribution.terminalEnvironment)
+            dshWebLaunching = false
+            dshWebRunning = result is DshWebLaunchResult.Opened
+            if (result is DshWebLaunchResult.Failed) {
+                resultMessage = result.dshWebMessage(context)
             }
         }
     }
@@ -446,6 +491,7 @@ internal fun LinuxEnvironmentScreen(
                     packageProfileUis.forEach { profileUi ->
                         val ready = profileReady[profileUi.target] == true
                         val isKimi = profileUi.target == InstallTarget.KIMI
+                        val isDsh = profileUi.target == InstallTarget.DSH
                         val summaryRes = if (selectedDistribution == LinuxDistribution.DEBIAN) {
                             profileUi.debianSummaryRes
                         } else {
@@ -485,6 +531,45 @@ internal fun LinuxEnvironmentScreen(
                                                     kimiWebRunning = !stopped
                                                 }
                                             },
+                                        )
+                                    }
+                                    if (isDsh && ready) {
+                                        if (dshWebRunning) {
+                                            TextButton(
+                                                text = stringResource(R.string.linux_dsh_web_stop),
+                                                enabled = !dshWebLaunching && !requiresRoot,
+                                                colors = ButtonDefaults.textButtonColorsPrimary(
+                                                    color = MiuixTheme.colorScheme.error,
+                                                    textColor = MiuixTheme.colorScheme.onError,
+                                                ),
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        val stopped = dshWebLauncher.stop(
+                                                            selectedDistribution.terminalEnvironment,
+                                                        )
+                                                        dshWebRunning = !stopped
+                                                    }
+                                                },
+                                            )
+                                        } else {
+                                            TextButton(
+                                                text = stringResource(
+                                                    if (dshWebLaunching) {
+                                                        R.string.linux_dsh_web_starting
+                                                    } else {
+                                                        R.string.linux_dsh_web_open
+                                                    },
+                                                ),
+                                                enabled = !dshWebLaunching && !requiresRoot,
+                                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                                                onClick = { launchDshWeb() },
+                                            )
+                                        }
+                                        TextButton(
+                                            text = stringResource(R.string.linux_dsh_plugin_open),
+                                            enabled = !dshWebLaunching,
+                                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                                            onClick = { showDshPluginSheet = true },
                                         )
                                     }
                                     TextButton(
@@ -580,6 +665,12 @@ internal fun LinuxEnvironmentScreen(
                 }
             }
         }
+    }
+    if (showDshPluginSheet) {
+        DshPluginLibrarySheet(
+            installer = dshPluginInstaller,
+            onDismiss = { showDshPluginSheet = false },
+        )
     }
 }
 
