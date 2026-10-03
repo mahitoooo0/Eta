@@ -73,12 +73,12 @@ internal object LinuxEnvironmentSettingsRepository {
         LinuxDistribution.entries.firstOrNull { distribution -> distribution.wireName == value }
 
     private fun defaultSelection(context: Context): LinuxDistribution {
-        val alpineReady = LinuxEnvironmentPaths.rootfsReady(
-            LinuxEnvironmentPaths.rootfsDir(context, LinuxDistribution.ALPINE).absolutePath,
-        )
-        val debianReady = LinuxEnvironmentPaths.rootfsReady(
-            LinuxEnvironmentPaths.rootfsDir(context, LinuxDistribution.DEBIAN).absolutePath,
-        )
-        return if (alpineReady && !debianReady) LinuxDistribution.ALPINE else LinuxDistribution.DEBIAN
+        val ready = LinuxDistribution.entries.filter { distribution ->
+            LinuxEnvironmentPaths.rootfsReady(
+                LinuxEnvironmentPaths.rootfsDir(context, distribution).absolutePath,
+            )
+        }
+        // 只装好一个环境时沿用它；装好多个或都没装时回到 Debian，与加入 Ubuntu 前一致。
+        return ready.singleOrNull() ?: LinuxDistribution.DEBIAN
     }
 }
