@@ -199,6 +199,7 @@ internal class AgentRuntimeRunExecutor(
                 environment = { when (LinuxEnvironmentSettingsRepository.current(appContext)) {
                     LinuxDistribution.ALPINE -> "alpine"
                     LinuxDistribution.DEBIAN -> "debian"
+                    LinuxDistribution.UBUNTU -> "ubuntu"
                 } },
                 legacyIds = { project -> AgentChildTaskGroups.ownedWorkspaceIds(childSessionId, project, workspaceEnvironment) },
             ) else null
@@ -347,6 +348,7 @@ internal class AgentRuntimeRunExecutor(
                 linuxEnvironmentLabelProvider = { when (LinuxEnvironmentSettingsRepository.current(appContext)) {
                     LinuxDistribution.ALPINE -> "Alpine"
                     LinuxDistribution.DEBIAN -> "Debian"
+                    LinuxDistribution.UBUNTU -> "Ubuntu"
                 } },
                 terminalSessionEnvironmentProvider = executor::terminalSessionEnvironment,
                 terminalSessionIdentityProvider = executor::terminalSessionIdentity,
