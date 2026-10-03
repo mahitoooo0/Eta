@@ -885,10 +885,11 @@ internal class RootShellTerminalController(
         when (environment.ifBlank { TerminalEnvironment.ANDROID.wireName }.lowercase()) {
             TerminalEnvironment.ANDROID.wireName -> TerminalEnvironment.ANDROID
             SELECTED_LINUX_WIRE_NAME -> selectedLinuxEnvironmentProvider()
-                .takeIf { it == TerminalEnvironment.ALPINE || it == TerminalEnvironment.DEBIAN }
+                .takeIf { it.isLinux }
                 ?: TerminalEnvironment.ALPINE
             TerminalEnvironment.ALPINE.wireName -> TerminalEnvironment.ALPINE
             TerminalEnvironment.DEBIAN.wireName -> TerminalEnvironment.DEBIAN
+            TerminalEnvironment.UBUNTU.wireName -> TerminalEnvironment.UBUNTU
             else -> throw IllegalArgumentException("environment 仅支持 android/linux")
         }
 

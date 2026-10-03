@@ -48,6 +48,12 @@ internal data class LinuxPackageProfile(
 }
 
 internal object LinuxPackageProfiles {
+    private const val UV_PYTHON_SETUP_SCRIPT =
+        "UV_PYTHON_INSTALL_DIR=/opt/eta/python UV_PYTHON_BIN_DIR=/usr/local/bin " +
+            "UV_PYTHON_INSTALL_BIN=1 uv python install --default --force"
+
+    private const val SSH_KEYGEN_SETUP_SCRIPT = "ssh-keygen -A >/dev/null 2>&1 || true"
+
     val PYTHON = LinuxPackageProfile(
         id = "python",
         markerName = AlpineEnvironmentPaths.PYTHON_TOOLS_MARKER,
@@ -55,15 +61,15 @@ internal object LinuxPackageProfiles {
         specs = mapOf(
             LinuxDistribution.ALPINE to LinuxPackageSpec(
                 managedTool = ManagedLinuxTool.UV,
-                setupScript = """
-                    UV_PYTHON_INSTALL_DIR=/opt/eta/python UV_PYTHON_BIN_DIR=/usr/local/bin UV_PYTHON_INSTALL_BIN=1 uv python install --default --force
-                """.trimIndent(),
+                setupScript = UV_PYTHON_SETUP_SCRIPT,
             ),
             LinuxDistribution.DEBIAN to LinuxPackageSpec(
                 managedTool = ManagedLinuxTool.UV,
-                setupScript = """
-                    UV_PYTHON_INSTALL_DIR=/opt/eta/python UV_PYTHON_BIN_DIR=/usr/local/bin UV_PYTHON_INSTALL_BIN=1 uv python install --default --force
-                """.trimIndent(),
+                setupScript = UV_PYTHON_SETUP_SCRIPT,
+            ),
+            LinuxDistribution.UBUNTU to LinuxPackageSpec(
+                managedTool = ManagedLinuxTool.UV,
+                setupScript = UV_PYTHON_SETUP_SCRIPT,
             ),
         ),
     )
@@ -80,6 +86,10 @@ internal object LinuxPackageProfiles {
                 packages = listOf("libatomic1"),
                 managedTool = ManagedLinuxTool.NODE,
             ),
+            LinuxDistribution.UBUNTU to LinuxPackageSpec(
+                packages = listOf("libatomic1"),
+                managedTool = ManagedLinuxTool.NODE,
+            ),
         ),
     )
     val SSH = LinuxPackageProfile(
@@ -89,11 +99,15 @@ internal object LinuxPackageProfiles {
         specs = mapOf(
             LinuxDistribution.ALPINE to LinuxPackageSpec(
                 packages = listOf("openssh"),
-                setupScript = "ssh-keygen -A >/dev/null 2>&1 || true",
+                setupScript = SSH_KEYGEN_SETUP_SCRIPT,
             ),
             LinuxDistribution.DEBIAN to LinuxPackageSpec(
                 packages = listOf("openssh-client", "openssh-server"),
-                setupScript = "ssh-keygen -A >/dev/null 2>&1 || true",
+                setupScript = SSH_KEYGEN_SETUP_SCRIPT,
+            ),
+            LinuxDistribution.UBUNTU to LinuxPackageSpec(
+                packages = listOf("openssh-client", "openssh-server"),
+                setupScript = SSH_KEYGEN_SETUP_SCRIPT,
             ),
         ),
     )
@@ -116,6 +130,7 @@ internal object LinuxPackageProfiles {
         specs = mapOf(
             LinuxDistribution.ALPINE to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
             LinuxDistribution.DEBIAN to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
+            LinuxDistribution.UBUNTU to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
         ),
     )
     val ALL = listOf(PYTHON, NODE, SSH, KIMI)
@@ -189,7 +204,7 @@ internal class LinuxPackageProfileInstaller(
 
         val packageHelper = when (distribution) {
             LinuxDistribution.ALPINE -> "/usr/local/bin/eta-apk"
-            LinuxDistribution.DEBIAN -> "/usr/local/bin/eta-apt"
+            LinuxDistribution.DEBIAN, LinuxDistribution.UBUNTU -> "/usr/local/bin/eta-apt"
         }
         onProgress(PackageProfileInstallProgress(PackageProfileInstallStage.INSTALLING))
         if (spec.packages.isNotEmpty()) {

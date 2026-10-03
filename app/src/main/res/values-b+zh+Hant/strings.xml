@@ -1090,6 +1090,11 @@
   <string name="linux_distribution_alpine_summary">輕量的 musl 環境</string>
   <string name="linux_distribution_debian">Debian</string>
   <string name="linux_distribution_debian_summary">軟體相容性更好的 glibc 環境</string>
+  <string name="linux_distribution_ubuntu">Ubuntu</string>
+  <string name="linux_distribution_ubuntu_summary">軟體包覆蓋最廣的 Ubuntu glibc 環境</string>
+  <string name="linux_ubuntu_already_ready">Ubuntu glibc 環境已經就緒</string>
+  <string name="linux_ubuntu_base_install_complete">Ubuntu %1$s 基礎環境安裝完成</string>
+  <string name="linux_ubuntu_install_complete">Ubuntu %1$s 與常用工具安裝完成</string>
   <string name="linux_install_base">安裝基礎環境</string>
   <string name="linux_install_base_tools">安裝基礎工具</string>
   <string name="linux_upgrade_tools">升級工具</string>

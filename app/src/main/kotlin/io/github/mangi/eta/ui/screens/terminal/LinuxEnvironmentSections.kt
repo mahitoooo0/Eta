@@ -101,6 +101,7 @@ internal fun LinuxEnvironmentConfiguration(
                         when (it) {
                             LinuxDistribution.ALPINE -> R.string.linux_distribution_alpine_summary
                             LinuxDistribution.DEBIAN -> R.string.linux_distribution_debian_summary
+                            LinuxDistribution.UBUNTU -> R.string.linux_distribution_ubuntu_summary
                         },
                     ),
                 )
@@ -148,6 +149,7 @@ internal fun LinuxDistribution.displayName(): String = stringResource(
     when (this) {
         LinuxDistribution.ALPINE -> R.string.linux_distribution_alpine
         LinuxDistribution.DEBIAN -> R.string.linux_distribution_debian
+        LinuxDistribution.UBUNTU -> R.string.linux_distribution_ubuntu
     },
 )
 

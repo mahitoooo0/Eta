@@ -114,7 +114,7 @@ internal object RootlessLinuxInstaller {
             val available = staging.parentFile!!.usableSpace
             if (available in 1 until 512L * 1024 * 1024) throw RootlessInstallFailure("INSUFFICIENT_STORAGE", "安装 Linux 至少需要 512 MB 可用内部存储，请清理后重试")
             if (staging.exists() && !staging.deleteRecursively()) throw RootlessInstallFailure("STAGING_CLEANUP_FAILED", "无法清理未完成安装，请重启 Eta 后重试")
-            extract(archive, staging, xz = distribution == LinuxDistribution.DEBIAN, stripComponents = if (distribution == LinuxDistribution.DEBIAN) 1 else 0)
+            extract(archive, staging, xz = distribution.isAptBased, stripComponents = if (distribution.isAptBased) 1 else 0)
             listOf("proc", "sys", "dev", "dev/shm", "workspace", "storage/emulated/0", "tmp", "usr/local/bin", "root").forEach { File(staging, it).mkdirs() }
             File(staging, "etc/resolv.conf").apply {
                 Files.deleteIfExists(toPath())
@@ -132,6 +132,21 @@ internal object RootlessLinuxInstaller {
                     File(staging, "etc/apt/apt.conf.d/99eta-rootless").writeText("APT::Sandbox::User \"root\";\nAcquire::Retries \"2\";\n")
                     File(staging, "usr/sbin/policy-rc.d").apply { writeText("#!/bin/sh\nexit 101\n"); setExecutable(true, false) }
                     "eta-apt" to DebianEnvironmentInstaller.aptMirrorScript()
+                }
+                LinuxDistribution.UBUNTU -> {
+                    val mirror = UbuntuEnvironmentInstaller.APT_MIRRORS.first()
+                    val sourcePath = UbuntuEnvironmentInstaller.aptSourcePath()
+                    // Ubuntu 24.04+ 的 DEB822 源指向官方站，必须清掉，只保留镜像版 sources.list。
+                    File(staging, "etc/apt/sources.list.d").listFiles()
+                        ?.filter { it.name.endsWith(".sources") }
+                        ?.forEach { it.delete() }
+                    File(staging, "etc/apt/sources.list").writeText(
+                        UbuntuEnvironmentInstaller.sourcesListEntries(sourcePath, mirror).joinToString("\n") + "\n",
+                    )
+                    File(staging, "etc/apt/apt.conf.d").mkdirs()
+                    File(staging, "etc/apt/apt.conf.d/99eta-rootless").writeText("APT::Sandbox::User \"root\";\nAcquire::Retries \"2\";\n")
+                    File(staging, "usr/sbin/policy-rc.d").apply { writeText("#!/bin/sh\nexit 101\n"); setExecutable(true, false) }
+                    "eta-apt" to UbuntuEnvironmentInstaller.aptMirrorScript()
                 }
             }
             File(staging, "usr/local/bin/${helper.first}").apply { writeText(helper.second + "\n"); setExecutable(true, false) }

@@ -237,7 +237,8 @@ internal object PinnedLinuxToolArtifacts {
         distribution: LinuxDistribution,
         abis: List<String>,
     ): VerifiedArtifact? {
-        if (distribution != LinuxDistribution.DEBIAN) return null
+        // Node 官方 glibc 归档适用于 Debian/Ubuntu；Alpine 用 apk 的 nodejs-current。
+        if (!distribution.isAptBased) return null
         return abis.firstNotNullOfOrNull { abi ->
             when (abi) {
                 "arm64-v8a" -> nodeArtifact(
