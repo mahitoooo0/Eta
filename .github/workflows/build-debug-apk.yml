@@ -31,6 +31,35 @@ jobs:
       - name: 配置 Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # runner 每次都会现生成 debug.keystore，导致各次构建签名不同、无法覆盖安装。
+      # 这里把 keystore 缓存下来，一次生成长期复用，保证所有 debug 构建签名一致。
+      - name: 恢复固定的 Debug 签名
+        id: debug-keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: eta-debug-keystore-v1
+
+      - name: 生成 Debug 签名（仅首次）
+        if: steps.debug-keystore.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+          test -s "$HOME/.android/debug.keystore"
+
+      - name: 打印签名指纹（用于跨构建比对）
+        run: |
+          set -euo pipefail
+          echo "cache-hit=${{ steps.debug-keystore.outputs.cache-hit }}"
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android \
+            | grep -A1 'Certificate fingerprints' | grep 'SHA256:' \
+            | sed 's/^ *//' | tee "$RUNNER_TEMP/eta-debug-fingerprint.txt"
+
       - name: 接受 Android SDK 许可证
         run: |
           set -euo pipefail
