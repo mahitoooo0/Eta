@@ -140,20 +140,27 @@ internal object LinuxPackageProfiles {
         ),
     )
 
+    /** 国内镜像源；官方 registry 在墙内不可达，重试也必须留在这里。 */
+    private const val DSH_MIRROR_REGISTRY = "--registry=https://registry.npmmirror.com"
+
     /**
      * DeepSeek Harness（dsh）同样由 npm 分发，运行在 Node profile 之上。
-     * 它比 Kimi 多一个原生依赖：`@deepseek-ai/dsh-fs-local` 依赖 koffi，koffi 需要
-     * 预编译二进制，取不到时会退回源码编译（要 cmake + 工具链）。因此这里的安装脚本
-     * 在镜像源失败后先补编译工具链再走官方源重试，覆盖两种情况。
-     * 完成标记前额外校验 `dsh --version`，避免「装上了但跑不起来」被当成成功。
+     * 它比 Kimi 多一个原生依赖：`@deepseek-ai/dsh-fs-local` 依赖 koffi。koffi 的
+     * 安装脚本会 `require` 自己来探测平台预编译包（`@koromix/koffi-linux-arm64`）；
+     * 预编译包缺失时（例如 registry 不可达导致 optionalDependencies 被静默跳过）
+     * 它会退回源码编译，此时需要 cmake + 工具链。
+     *
+     * 因此这里失败后先补编译工具链，再**留在镜像源上**重试一次——换回官方源毫无意义，
+     * 墙内根本连不上。完成标记前额外校验 `dsh --version`，避免「装上了但跑不起来」
+     * 被当成成功。
      */
     private const val DSH_INSTALL_SCRIPT =
-        "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com " +
+        "npm install -g --prefix /usr/local $DSH_MIRROR_REGISTRY " +
             "@deepseek-ai/dsh@latest || {\n" +
             "echo 'eta: dsh install failed; adding build toolchain for koffi and retrying'\n" +
             "if [ -x /usr/local/bin/eta-apt ]; then /usr/local/bin/eta-apt install cmake build-essential; fi\n" +
             "if [ -x /usr/local/bin/eta-apk ]; then /usr/local/bin/eta-apk install cmake build-base; fi\n" +
-            "npm install -g --prefix /usr/local @deepseek-ai/dsh@latest\n" +
+            "npm install -g --prefix /usr/local $DSH_MIRROR_REGISTRY @deepseek-ai/dsh@latest\n" +
             "}"
 
     val DSH = LinuxPackageProfile(
