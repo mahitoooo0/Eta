@@ -85,6 +85,7 @@ private enum class InstallTarget {
     NODE,
     SSH,
     KIMI,
+    DSH,
 }
 
 private data class PackageProfileUi(
@@ -127,6 +128,13 @@ private val packageProfileUis = listOf(
         titleRes = R.string.linux_kimi_tools,
         summaryRes = R.string.linux_kimi_tools_summary,
         readyRes = R.string.linux_kimi_tools_ready,
+    ),
+    PackageProfileUi(
+        target = InstallTarget.DSH,
+        profile = LinuxPackageProfiles.DSH,
+        titleRes = R.string.linux_dsh_tools,
+        summaryRes = R.string.linux_dsh_tools_summary,
+        readyRes = R.string.linux_dsh_tools_ready,
     ),
 )
 
