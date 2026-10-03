@@ -38,6 +38,7 @@ import io.github.mangi.eta.agent.terminal.DebianInstallProgress
 import io.github.mangi.eta.agent.terminal.DebianInstallResult
 import io.github.mangi.eta.agent.terminal.DebianInstallStage
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
+import io.github.mangi.eta.agent.terminal.DshPluginInstaller
 import io.github.mangi.eta.agent.terminal.LinuxApkAnalysisInstaller
 import io.github.mangi.eta.agent.terminal.LinuxDistribution
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
@@ -49,11 +50,19 @@ import io.github.mangi.eta.agent.terminal.PackageProfileInstallProgress
 import io.github.mangi.eta.agent.terminal.PackageProfileInstallResult
 import io.github.mangi.eta.agent.terminal.PackageProfileInstallStage
 import io.github.mangi.eta.agent.terminal.SharedFolderMounts
+import io.github.mangi.eta.agent.terminal.UbuntuEnvironmentInstaller
+import io.github.mangi.eta.agent.terminal.UbuntuEnvironmentState
+import io.github.mangi.eta.agent.terminal.UbuntuInstallProgress
+import io.github.mangi.eta.agent.terminal.UbuntuInstallResult
+import io.github.mangi.eta.agent.terminal.UbuntuInstallStage
 import io.github.mangi.eta.agent.terminal.terminalEnvironment
 import io.github.mangi.eta.core.AndroidAgentLogger
 import io.github.mangi.eta.data.repository.LinuxEnvironmentSettingsRepository
 import io.github.mangi.eta.ui.app.KimiWebLaunchResult
 import io.github.mangi.eta.ui.app.KimiWebLauncher
+import io.github.mangi.eta.ui.app.DshWebLaunchResult
+import io.github.mangi.eta.ui.app.DshWebLauncher
+import io.github.mangi.eta.ui.app.dshWebMessage
 import io.github.mangi.eta.ui.app.launchForegroundExecution
 import io.github.mangi.eta.ui.app.message
 import io.github.mangi.eta.ui.app.rememberDeviceCapabilities
@@ -80,6 +89,7 @@ private enum class InstallTarget {
     NODE,
     SSH,
     KIMI,
+    DSH,
 }
 
 private data class PackageProfileUi(
@@ -123,6 +133,13 @@ private val packageProfileUis = listOf(
         summaryRes = R.string.linux_kimi_tools_summary,
         readyRes = R.string.linux_kimi_tools_ready,
     ),
+    PackageProfileUi(
+        target = InstallTarget.DSH,
+        profile = LinuxPackageProfiles.DSH,
+        titleRes = R.string.linux_dsh_tools,
+        summaryRes = R.string.linux_dsh_tools_summary,
+        readyRes = R.string.linux_dsh_tools_ready,
+    ),
 )
 
 @Composable
@@ -150,6 +167,7 @@ internal fun LinuxEnvironmentScreen(
     val requiresRoot = backend == LinuxExecutionBackend.CHROOT && !capabilities.root.isGranted
     val installer = remember(appContext, backend) { AlpineEnvironmentInstaller(appContext) }
     val debianInstaller = remember(appContext, backend) { DebianEnvironmentInstaller(appContext) }
+    val ubuntuInstaller = remember(appContext, backend) { UbuntuEnvironmentInstaller(appContext) }
     val apkAnalysisInstaller = remember(appContext, selectedDistribution, backend) {
         LinuxApkAnalysisInstaller(appContext, selectedDistribution)
     }
@@ -164,9 +182,11 @@ internal fun LinuxEnvironmentScreen(
     }
     var status by remember(installer) { mutableStateOf(installer.status()) }
     var debianStatus by remember(debianInstaller) { mutableStateOf(debianInstaller.status()) }
+    var ubuntuStatus by remember(ubuntuInstaller) { mutableStateOf(ubuntuInstaller.status()) }
     var busyTarget by remember { mutableStateOf<InstallTarget?>(null) }
     var progress by remember { mutableStateOf<AlpineInstallProgress?>(null) }
     var debianProgress by remember { mutableStateOf<DebianInstallProgress?>(null) }
+    var ubuntuProgress by remember { mutableStateOf<UbuntuInstallProgress?>(null) }
     var profileProgressSummary by remember { mutableStateOf<String?>(null) }
     var resultMessage by remember { mutableStateOf<String?>(null) }
     var profileReady by remember(selectedDistribution, backend) {
@@ -193,9 +213,31 @@ internal fun LinuxEnvironmentScreen(
             ),
         )
     }
-    LaunchedEffect(selectedDistribution, backend, installer, debianInstaller) {
+    var dshWebLaunching by remember { mutableStateOf(false) }
+    var dshWebRunning by remember(selectedDistribution, backend) { mutableStateOf(false) }
+    var showDshPluginSheet by remember { mutableStateOf(false) }
+    val dshPluginInstaller = remember(appContext, selectedDistribution) {
+        DshPluginInstaller(context = appContext, distribution = selectedDistribution)
+    }
+    val dshWebLauncher = remember(appContext) {
+        DshWebLauncher(
+            context = appContext,
+            daemonSupervisor = DetachedTaskSupervisor(
+                logger = AndroidAgentLogger,
+                recordsFile = DetachedTaskSupervisor.defaultRecordsFile(appContext),
+                linuxRootfsPathProvider = { environment ->
+                    environment.linuxDistribution?.let { distribution ->
+                        LinuxEnvironmentPaths.rootfsDir(appContext, distribution).absolutePath
+                    }
+                },
+                linuxSharedMountsProvider = { SharedFolderMounts.current() },
+            ),
+        )
+    }
+    LaunchedEffect(selectedDistribution, backend, installer, debianInstaller, ubuntuInstaller) {
         status = installer.status()
         debianStatus = debianInstaller.status()
+        ubuntuStatus = ubuntuInstaller.status()
         profileReady = packageProfileUis.associate { it.target to profileInstallers.getValue(it.target).isReady() }
         apkAnalysisReady = apkAnalysisInstaller.isReady()
     }
@@ -204,13 +246,20 @@ internal fun LinuxEnvironmentScreen(
             kimiWebRunning = kimiWebLauncher.status(selectedDistribution.terminalEnvironment).running
         }
     }
+    LaunchedEffect(selectedDistribution, backend, dshWebLaunching) {
+        if (!dshWebLaunching) {
+            dshWebRunning = dshWebLauncher.status(selectedDistribution.terminalEnvironment).running
+        }
+    }
     val selectedBaseReady = when (selectedDistribution) {
         LinuxDistribution.ALPINE -> status.state != AlpineEnvironmentState.NOT_INSTALLED
         LinuxDistribution.DEBIAN -> debianStatus.state != DebianEnvironmentState.NOT_INSTALLED
+        LinuxDistribution.UBUNTU -> ubuntuStatus.state != UbuntuEnvironmentState.NOT_INSTALLED
     }
     val selectedToolsReady = when (selectedDistribution) {
         LinuxDistribution.ALPINE -> status.state == AlpineEnvironmentState.READY
         LinuxDistribution.DEBIAN -> debianStatus.state == DebianEnvironmentState.READY
+        LinuxDistribution.UBUNTU -> ubuntuStatus.state == UbuntuEnvironmentState.READY
     }
 
     fun launchInstallation(block: suspend () -> Unit) {
@@ -220,6 +269,7 @@ internal fun LinuxEnvironmentScreen(
             } finally {
                 progress = null
                 debianProgress = null
+                ubuntuProgress = null
                 profileProgressSummary = null
                 apkAnalysisProgress = null
                 busyTarget = null
@@ -252,11 +302,16 @@ internal fun LinuxEnvironmentScreen(
                 LinuxDistribution.DEBIAN -> debianInstaller.installBase { update ->
                     withContext(Dispatchers.Main.immediate) { debianProgress = update }
                 }.toMessage(context)
+                LinuxDistribution.UBUNTU -> ubuntuInstaller.installBase { update ->
+                    withContext(Dispatchers.Main.immediate) { ubuntuProgress = update }
+                }.toMessage(context)
             }
             status = installer.status()
             debianStatus = debianInstaller.status()
+            ubuntuStatus = ubuntuInstaller.status()
             progress = null
             debianProgress = null
+            ubuntuProgress = null
             busyTarget = null
         }
     }
@@ -273,15 +328,20 @@ internal fun LinuxEnvironmentScreen(
                 LinuxDistribution.DEBIAN -> debianInstaller.installTools { update ->
                     withContext(Dispatchers.Main.immediate) { debianProgress = update }
                 }.toMessage(context)
+                LinuxDistribution.UBUNTU -> ubuntuInstaller.installTools { update ->
+                    withContext(Dispatchers.Main.immediate) { ubuntuProgress = update }
+                }.toMessage(context)
             }
             status = installer.status()
             debianStatus = debianInstaller.status()
+            ubuntuStatus = ubuntuInstaller.status()
             profileReady = packageProfileUis.associate {
                 it.target to profileInstallers.getValue(it.target).isReady()
             }
             apkAnalysisReady = apkAnalysisInstaller.isReady()
             progress = null
             debianProgress = null
+            ubuntuProgress = null
             busyTarget = null
         }
     }
@@ -301,6 +361,21 @@ internal fun LinuxEnvironmentScreen(
         }
     }
 
+    fun launchDshWeb() {
+        if (dshWebLaunching || requiresRoot) return
+        requestExecutionNotifications()
+        dshWebLaunching = true
+        resultMessage = null
+        coroutineScope.launch {
+            val result = dshWebLauncher.launch(selectedDistribution.terminalEnvironment)
+            dshWebLaunching = false
+            dshWebRunning = result is DshWebLaunchResult.Opened
+            if (result is DshWebLaunchResult.Failed) {
+                resultMessage = result.dshWebMessage(context)
+            }
+        }
+    }
+
     MiuixScaffoldPage(
         title = stringResource(R.string.ui_linux_tool_environment_314d22),
         onBack = onBack,
@@ -309,11 +384,13 @@ internal fun LinuxEnvironmentScreen(
             val version = when (selectedDistribution) {
                 LinuxDistribution.ALPINE -> status.version
                 LinuxDistribution.DEBIAN -> debianStatus.version
+                LinuxDistribution.UBUNTU -> ubuntuStatus.version
             }
             val activeProgress = when (busyTarget) {
                 InstallTarget.BASE, InstallTarget.TOOLS -> when (selectedDistribution) {
                     LinuxDistribution.ALPINE -> progress?.summary(context)
                     LinuxDistribution.DEBIAN -> debianProgress?.summary(context)
+                    LinuxDistribution.UBUNTU -> ubuntuProgress?.summary(context)
                 }
                 InstallTarget.APK_ANALYSIS -> apkAnalysisProgress?.summary(context)
                 else -> profileProgressSummary
@@ -414,6 +491,7 @@ internal fun LinuxEnvironmentScreen(
                     packageProfileUis.forEach { profileUi ->
                         val ready = profileReady[profileUi.target] == true
                         val isKimi = profileUi.target == InstallTarget.KIMI
+                        val isDsh = profileUi.target == InstallTarget.DSH
                         val summaryRes = if (selectedDistribution == LinuxDistribution.DEBIAN) {
                             profileUi.debianSummaryRes
                         } else {
@@ -453,6 +531,46 @@ internal fun LinuxEnvironmentScreen(
                                                     kimiWebRunning = !stopped
                                                 }
                                             },
+                                        )
+                                    }
+                                    if (isDsh && ready) {
+                                        if (dshWebRunning) {
+                                            TextButton(
+                                                text = stringResource(R.string.linux_dsh_web_stop),
+                                                enabled = !dshWebLaunching && !requiresRoot,
+                                                colors = ButtonDefaults.textButtonColorsPrimary(
+                                                    color = MiuixTheme.colorScheme.error,
+                                                    textColor = MiuixTheme.colorScheme.onError,
+                                                ),
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        val stopped = dshWebLauncher.stop(
+                                                            selectedDistribution.terminalEnvironment,
+                                                        )
+                                                        dshWebRunning = !stopped
+                                                    }
+                                                },
+                                            )
+                                        } else {
+                                            TextButton(
+                                                text = stringResource(
+                                                    if (dshWebLaunching) {
+                                                        R.string.linux_dsh_web_starting
+                                                    } else {
+                                                        R.string.linux_dsh_web_open
+                                                    },
+                                                ),
+                                                enabled = !dshWebLaunching && !requiresRoot,
+                                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                                                onClick = { launchDshWeb() },
+                                            )
+                                        }
+                                        TextButton(
+                                            text = stringResource(R.string.linux_dsh_plugin_open),
+                                            // root 被撤销时打开面板只会让每个操作都必然失败。
+                                            enabled = !dshWebLaunching && !requiresRoot,
+                                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                                            onClick = { showDshPluginSheet = true },
                                         )
                                     }
                                     TextButton(
@@ -549,6 +667,13 @@ internal fun LinuxEnvironmentScreen(
             }
         }
     }
+    if (showDshPluginSheet) {
+        DshPluginLibrarySheet(
+            installer = dshPluginInstaller,
+            actionScope = coroutineScope,
+            onDismiss = { showDshPluginSheet = false },
+        )
+    }
 }
 
 private fun Long.toReadableSize(context: Context): String = Formatter.formatShortFileSize(context, this)
@@ -565,6 +690,13 @@ private fun AlpineInstallProgress.summary(context: Context): String {
 private fun DebianInstallProgress.summary(context: Context): String {
     val stageName = stage.displayName(context)
     if (stage != DebianInstallStage.DOWNLOADING || totalBytes <= 0L) return stageName
+    val percent = (downloadedBytes * 100L / totalBytes).coerceIn(0L, 100L)
+    return context.getString(R.string.linux_progress_percent, stageName, percent)
+}
+
+private fun UbuntuInstallProgress.summary(context: Context): String {
+    val stageName = stage.displayName(context)
+    if (stage != UbuntuInstallStage.DOWNLOADING || totalBytes <= 0L) return stageName
     val percent = (downloadedBytes * 100L / totalBytes).coerceIn(0L, 100L)
     return context.getString(R.string.linux_progress_percent, stageName, percent)
 }
@@ -626,6 +758,18 @@ private fun DebianInstallResult.toMessage(context: Context): String = when (this
     is DebianInstallResult.Failed -> message ?: context.getString(R.string.linux_stage_failed, stage.displayName(context))
 }
 
+private fun UbuntuInstallResult.toMessage(context: Context): String = when (this) {
+    UbuntuInstallResult.AlreadyReady -> context.getString(R.string.linux_ubuntu_already_ready)
+    is UbuntuInstallResult.BaseInstalled -> context.getString(R.string.linux_ubuntu_base_install_complete, version)
+    is UbuntuInstallResult.ToolsInstalled -> context.getString(R.string.linux_ubuntu_install_complete, version)
+    UbuntuInstallResult.BaseNotInstalled -> context.getString(R.string.linux_base_required)
+    is UbuntuInstallResult.UnsupportedAbi -> context.getString(R.string.linux_unsupported_abi, abi)
+    UbuntuInstallResult.RootUnavailable -> context.getString(R.string.linux_root_unavailable)
+    UbuntuInstallResult.BusyBoxUnavailable -> context.getString(R.string.linux_busybox_unavailable)
+    UbuntuInstallResult.EnvironmentUnavailable -> context.getString(R.string.linux_environment_unavailable)
+    is UbuntuInstallResult.Failed -> message ?: context.getString(R.string.linux_stage_failed, stage.displayName(context))
+}
+
 private fun PackageProfileInstallResult.toMessage(
     context: Context,
     profileTitle: String,
@@ -678,6 +822,16 @@ private fun DebianInstallStage.displayName(context: Context): String = context.g
         DebianInstallStage.EXTRACTING -> R.string.linux_stage_extracting
         DebianInstallStage.INSTALLING_TOOLS -> R.string.linux_stage_installing_tools
         DebianInstallStage.COMPLETE -> R.string.linux_stage_complete
+    },
+)
+
+private fun UbuntuInstallStage.displayName(context: Context): String = context.getString(
+    when (this) {
+        UbuntuInstallStage.CHECKING -> R.string.linux_stage_checking
+        UbuntuInstallStage.DOWNLOADING -> R.string.linux_stage_downloading
+        UbuntuInstallStage.EXTRACTING -> R.string.linux_stage_extracting
+        UbuntuInstallStage.INSTALLING_TOOLS -> R.string.linux_stage_installing_tools
+        UbuntuInstallStage.COMPLETE -> R.string.linux_stage_complete
     },
 )
 

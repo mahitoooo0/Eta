@@ -584,4 +584,5 @@ internal val TerminalEnvironment.displayName: String
         TerminalEnvironment.ANDROID -> "Android"
         TerminalEnvironment.ALPINE -> "Alpine"
         TerminalEnvironment.DEBIAN -> "Debian"
+        TerminalEnvironment.UBUNTU -> "Ubuntu"
     }

@@ -165,6 +165,7 @@ private fun daemonMeta(task: DaemonTaskUi): String {
         TerminalEnvironment.ANDROID -> "Android"
         TerminalEnvironment.ALPINE -> "Alpine"
         TerminalEnvironment.DEBIAN -> "Debian"
+        TerminalEnvironment.UBUNTU -> "Ubuntu"
     }
     val stateLabel = stringResource(
         if (task.running) R.string.terminal_daemon_running else R.string.terminal_daemon_exited

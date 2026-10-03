@@ -46,7 +46,7 @@ internal fun linuxApkAnalysisReady(rootfs: File): Boolean =
 internal fun linuxApkJavaInstallCommand(distribution: LinuxDistribution): String =
     when (distribution) {
         LinuxDistribution.ALPINE -> "/usr/local/bin/eta-apk install openjdk25-jdk"
-        LinuxDistribution.DEBIAN -> "/usr/local/bin/eta-apt install openjdk-25-jdk-headless"
+        LinuxDistribution.DEBIAN, LinuxDistribution.UBUNTU -> "/usr/local/bin/eta-apt install openjdk-25-jdk-headless"
     }
 
 /** 为当前 Linux 发行版安装 Java 分析工具；APK 资源回编译仍需 ARM64 AAPT2 支持。 */
