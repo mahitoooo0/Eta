@@ -178,14 +178,14 @@ internal class UbuntuEnvironmentInstaller(
             "ash", "chroot", "grep", "gzip", "mount", "sha256sum", "tar", "unshare", "xz",
         ).joinToString(" ")
         val command = """
-            if [ "${'$'}(id -u)" != 0 ]; then exit $PREFLIGHT_ROOT_UNAVAILABLE; fi
+            if [ "${'$'}(id -u)" != 0 ]; then exit ${'$'}PREFLIGHT_ROOT_UNAVAILABLE; fi
             ${AndroidBusyBox.discoveryScript()}
-            if [ -z "${'$'}eta_busybox" ]; then exit $PREFLIGHT_BUSYBOX_UNAVAILABLE; fi
-            for eta_applet in $requiredApplets; do
-              "${'$'}eta_busybox" --list | "${'$'}eta_busybox" grep -qx "${'$'}eta_applet" || exit $PREFLIGHT_BUSYBOX_INCOMPLETE
+            if [ -z "${'$'}eta_busybox" ]; then exit ${'$'}PREFLIGHT_BUSYBOX_UNAVAILABLE; fi
+            for eta_applet in ${'$'}requiredApplets; do
+              "${'$'}eta_busybox" --list | "${'$'}eta_busybox" grep -qx "${'$'}eta_applet" || exit ${'$'}PREFLIGHT_BUSYBOX_INCOMPLETE
             done
             "${'$'}eta_busybox" unshare -m --propagation private \
-              "${'$'}eta_busybox" chroot / /system/bin/sh -c ':' || exit $PREFLIGHT_ENVIRONMENT_UNAVAILABLE
+              "${'$'}eta_busybox" chroot / /system/bin/sh -c ':' || exit ${'$'}PREFLIGHT_ENVIRONMENT_UNAVAILABLE
         """.trimIndent()
         return InstallerShellRunner.run(command, 15, TerminalEnvironment.ANDROID)
     }
@@ -259,21 +259,21 @@ internal class UbuntuEnvironmentInstaller(
             rm -f /etc/apt/sources.list.d/*.sources 2>/dev/null
             mkdir -p /etc/apt/apt.conf.d
             rm -f /etc/apt/apt.conf.d/99eta-proxy 2>/dev/null
-            for eta_proxy in $PROXY_CANDIDATES; do
+            for eta_proxy in ${'$'}PROXY_CANDIDATES; do
               if timeout 3 bash -c "exec 3<>/dev/tcp/${'$'}{eta_proxy%:*}/${'$'}{eta_proxy##*:}" 2>/dev/null; then
-                printf 'Acquire::http::Proxy "http://%s";\nAcquire::https::Proxy "http://%s";\n' "$eta_proxy" "$eta_proxy" > /etc/apt/apt.conf.d/99eta-proxy
-                echo "eta: using apt proxy $eta_proxy"
+                printf 'Acquire::http::Proxy "http://%s";\nAcquire::https::Proxy "http://%s";\n' "${'$'}eta_proxy" "${'$'}eta_proxy" > /etc/apt/apt.conf.d/99eta-proxy
+                echo "eta: using apt proxy ${'$'}eta_proxy"
                 break
               fi
             done
             printf '%s\n' '#!/bin/sh' > /usr/local/bin/eta-apt
             printf %s ${shellQuote(aptMirrorScriptBody())} >> /usr/local/bin/eta-apt
             chmod 0755 /usr/local/bin/eta-apt
-            /usr/local/bin/eta-apt install $packages || exit 70
+            /usr/local/bin/eta-apt install ${'$'}packages || exit 70
             if command -v fdfind >/dev/null 2>&1; then ln -sf /usr/bin/fdfind /usr/local/bin/fd; fi
             cat > /${COMMON_TOOLS_MARKER} <<'ETA_TOOLSET_EOF'
-            ubuntu=$UBUNTU_VERSION
-            toolset=$TOOLSET_REVISION
+            ubuntu=${'$'}UBUNTU_VERSION
+            toolset=${'$'}TOOLSET_REVISION
             profiles=agent
             ETA_TOOLSET_EOF
             chmod 0644 /${COMMON_TOOLS_MARKER}
@@ -297,7 +297,7 @@ internal class UbuntuEnvironmentInstaller(
         if (!baseRootfsReady(rootfs)) return false
         return LinuxEnvironmentPaths.markerSatisfied(
             File(rootfs, COMMON_TOOLS_MARKER),
-            "toolset=$TOOLSET_REVISION",
+            "toolset=${'$'}TOOLSET_REVISION",
         )
     }
 
@@ -375,9 +375,9 @@ internal class UbuntuEnvironmentInstaller(
         internal fun sourcesListEntries(sourcePath: String, mirror: UbuntuAptMirror = APT_MIRRORS.first()): List<String> {
             val base = mirrorBaseUrl(mirror, sourcePath)
             return listOf(
-                "deb $base $UBUNTU_SUITE $UBUNTU_COMPONENTS",
-                "deb $base $UBUNTU_SUITE-updates $UBUNTU_COMPONENTS",
-                "deb $base $UBUNTU_SUITE-security $UBUNTU_COMPONENTS",
+                "deb ${'$'}base ${'$'}UBUNTU_SUITE ${'$'}UBUNTU_COMPONENTS",
+                "deb ${'$'}base ${'$'}UBUNTU_SUITE-updates ${'$'}UBUNTU_COMPONENTS",
+                "deb ${'$'}base ${'$'}UBUNTU_SUITE-security ${'$'}UBUNTU_COMPONENTS",
             )
         }
 
@@ -397,9 +397,9 @@ internal class UbuntuEnvironmentInstaller(
                 append("if [ \"${'$'}eta_apt_path\" = ports ]; then eta_apt_base=${mirror.portsBaseUrl}; else eta_apt_base=${mirror.archiveBaseUrl}; fi;; ")
             }
             append("*) return 64;; esac; ")
-            append("printf '%s\\n' \"deb ${'$'}eta_apt_base $UBUNTU_SUITE $UBUNTU_COMPONENTS\" ")
-            append("\"deb ${'$'}eta_apt_base $UBUNTU_SUITE-updates $UBUNTU_COMPONENTS\" ")
-            append("\"deb ${'$'}eta_apt_base $UBUNTU_SUITE-security $UBUNTU_COMPONENTS\" > /etc/apt/sources.list; ")
+            append("printf '%s\\n' \"deb ${'$'}eta_apt_base ${'$'}UBUNTU_SUITE ${'$'}UBUNTU_COMPONENTS\" ")
+            append("\"deb ${'$'}eta_apt_base ${'$'}UBUNTU_SUITE-updates ${'$'}UBUNTU_COMPONENTS\" ")
+            append("\"deb ${'$'}eta_apt_base ${'$'}UBUNTU_SUITE-security ${'$'}UBUNTU_COMPONENTS\" > /etc/apt/sources.list; ")
             append("}; ")
             append("case \"${'$'}{1:-}\" in ")
             append("install) shift; [ \"${'$'}#\" -gt 0 ] || exit 64; ")
@@ -438,7 +438,7 @@ internal class UbuntuEnvironmentInstaller(
             sha256: String,
             sizeBytes: Long,
         ): VerifiedArtifact {
-            val officialUrl = "https://github.com/termux/proot-distro/releases/download/v4.29.0/$fileName"
+            val officialUrl = "https://github.com/termux/proot-distro/releases/download/v4.29.0/${'$'}fileName"
             return VerifiedArtifact(
                 id = id,
                 version = UBUNTU_VERSION,
