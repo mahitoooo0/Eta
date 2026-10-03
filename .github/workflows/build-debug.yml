@@ -2,6 +2,8 @@ name: Eta Build (Original Signing)
 
 on:
   workflow_dispatch:
+  push:
+    branches: ["feat/dsh-profile"]
 
 permissions:
   contents: read
