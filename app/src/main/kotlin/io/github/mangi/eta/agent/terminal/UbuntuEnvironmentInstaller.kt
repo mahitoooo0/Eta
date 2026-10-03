@@ -254,8 +254,18 @@ internal class UbuntuEnvironmentInstaller(
         val packages = AGENT_PACKAGES.joinToString(" ")
         val command = """
             export DEBIAN_FRONTEND=noninteractive
+            PROXY_CANDIDATES="${APT_PROXY_CANDIDATES.joinToString(" ")}"
             mkdir -p /usr/local/bin
             rm -f /etc/apt/sources.list.d/*.sources 2>/dev/null
+            mkdir -p /etc/apt/apt.conf.d
+            rm -f /etc/apt/apt.conf.d/99eta-proxy 2>/dev/null
+            for eta_proxy in $PROXY_CANDIDATES; do
+              if timeout 3 bash -c "exec 3<>/dev/tcp/${'$'}{eta_proxy%:*}/${'$'}{eta_proxy##*:}" 2>/dev/null; then
+                printf 'Acquire::http::Proxy "http://%s";\nAcquire::https::Proxy "http://%s";\n' "$eta_proxy" "$eta_proxy" > /etc/apt/apt.conf.d/99eta-proxy
+                echo "eta: using apt proxy $eta_proxy"
+                break
+              fi
+            done
             printf '%s\n' '#!/bin/sh' > /usr/local/bin/eta-apt
             printf %s ${shellQuote(aptMirrorScriptBody())} >> /usr/local/bin/eta-apt
             chmod 0755 /usr/local/bin/eta-apt
@@ -321,6 +331,19 @@ internal class UbuntuEnvironmentInstaller(
             "gawk", "git", "grep", "gzip", "jq", "less", "openssl", "openssh-client",
             "patch", "procps", "ripgrep", "rsync", "sed", "sqlite3", "tar", "unzip", "util-linux", "wget",
             "xz-utils", "zip", "zstd", "fd-find",
+        )
+
+        /**
+         * apt 候选代理端口。chroot 只隔离文件系统、不新建 network namespace，
+         * 所以宿主 loopback 上的代理对 chroot 同样可达。
+         * 逐个探测，谁在监听用谁；全都不在就保持直连（国内镜像本来也不需要代理）。
+         */
+        internal val APT_PROXY_CANDIDATES = listOf(
+            "127.0.0.1:7080", // sing-box / boxproxy mixed 入站
+            "127.0.0.1:7890", // Clash 默认混合端口
+            "127.0.0.1:7897", // Clash Verge
+            "127.0.0.1:1080", // 通用 SOCKS/HTTP
+            "127.0.0.1:10808", // v2rayN
         )
 
         /** 真机链路只保留国内镜像和官方源，避免慢镜像串行拖长安装。 */
