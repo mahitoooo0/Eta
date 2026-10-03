@@ -1,0 +1,69 @@
+name: Ubuntu 支持校验
+
+on:
+  push:
+    branches: ["feat/ubuntu-support"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ubuntu-support-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 编译与单测
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-provider: basic
+
+      - name: 接受 Android SDK 许可证
+        run: |
+          set -euo pipefail
+          sdkmanager="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          if [[ -z "$sdkmanager" ]]; then
+            echo "::error::未找到 sdkmanager"
+            exit 1
+          fi
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --channel=3 "platforms;android-37.0"
+
+      - name: 校验子代理工作区
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s app/src/test/python -v
+
+      - name: 编译 Debug Kotlin
+        run: ./gradlew --no-daemon --no-configuration-cache :app:compileDebugKotlin
+
+      - name: 运行 terminal 单元测试
+        timeout-minutes: 20
+        run: >-
+          ./gradlew --no-daemon --no-configuration-cache
+          :app:testDebugUnitTest
+          --tests "io.github.mangi.eta.agent.terminal.*"
+
+      - name: 上传单测报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-support-test-reports
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: ignore
+          retention-days: 7
