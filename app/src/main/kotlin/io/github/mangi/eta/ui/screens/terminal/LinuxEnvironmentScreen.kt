@@ -658,9 +658,9 @@ private fun DebianInstallResult.toMessage(context: Context): String = when (this
 }
 
 private fun UbuntuInstallResult.toMessage(context: Context): String = when (this) {
-    UbuntuInstallResult.AlreadyReady -> context.getString(R.string.linux_already_ready)
-    is UbuntuInstallResult.BaseInstalled -> context.getString(R.string.linux_base_install_complete, version)
-    is UbuntuInstallResult.ToolsInstalled -> context.getString(R.string.linux_install_complete, version)
+    UbuntuInstallResult.AlreadyReady -> context.getString(R.string.linux_ubuntu_already_ready)
+    is UbuntuInstallResult.BaseInstalled -> context.getString(R.string.linux_ubuntu_base_install_complete, version)
+    is UbuntuInstallResult.ToolsInstalled -> context.getString(R.string.linux_ubuntu_install_complete, version)
     UbuntuInstallResult.BaseNotInstalled -> context.getString(R.string.linux_base_required)
     is UbuntuInstallResult.UnsupportedAbi -> context.getString(R.string.linux_unsupported_abi, abi)
     UbuntuInstallResult.RootUnavailable -> context.getString(R.string.linux_root_unavailable)
