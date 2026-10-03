@@ -227,6 +227,7 @@ internal class UbuntuEnvironmentInstaller(
             nameserver 1.1.1.1
             ETA_RESOLV_EOF
             "${'$'}eta_busybox" mkdir -p "${'$'}eta_temporary/etc/apt/apt.conf.d" "${'$'}eta_temporary/usr/local/bin"
+            "${'$'}eta_busybox" rm -f "${'$'}eta_temporary"/etc/apt/sources.list.d/*.sources
             cat > "${'$'}eta_temporary/etc/apt/apt.conf.d/99eta-network" <<'ETA_APT_CONFIG_EOF'
             Acquire::Retries "2";
             Acquire::http::Pipeline-Depth "0";
@@ -254,6 +255,7 @@ internal class UbuntuEnvironmentInstaller(
         val command = """
             export DEBIAN_FRONTEND=noninteractive
             mkdir -p /usr/local/bin
+            rm -f /etc/apt/sources.list.d/*.sources 2>/dev/null
             printf '%s\n' '#!/bin/sh' > /usr/local/bin/eta-apt
             printf %s ${shellQuote(aptMirrorScriptBody())} >> /usr/local/bin/eta-apt
             chmod 0755 /usr/local/bin/eta-apt
@@ -364,6 +366,8 @@ internal class UbuntuEnvironmentInstaller(
             // 脚本在 guest 内执行，uname -m 才是 rootfs 的真实架构。
             append("case \"${'$'}(uname -m)\" in aarch64|arm64|armv8l) eta_apt_path=ports;; *) eta_apt_path=archive;; esac; ")
             append("eta_apt_write_sources() { ")
+            // Ubuntu 24.04+ 默认改用 DEB822 的 ubuntu.sources；残留它会让 apt 继续访问官方源。
+            append("rm -f /etc/apt/sources.list.d/*.sources 2>/dev/null; ")
             append("case \"${'$'}1\" in ")
             APT_MIRRORS.forEach { mirror ->
                 append("${mirror.id}) ")
