@@ -32,7 +32,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       # runner 每次都会现生成 debug.keystore，导致各次构建签名不同、无法覆盖安装。
-      # 这里把 keystore 缓存下来，一次生成长期复用，保证所有 debug 构建签名一致。
+      # 这里把 keystore 缓存下来，一次生成长期复用，保证所有 debug 构建签名一致（覆盖安装不再冲突）。
       - name: 恢复固定的 Debug 签名
         id: debug-keystore
         uses: actions/cache@v4
