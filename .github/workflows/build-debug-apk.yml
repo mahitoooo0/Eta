@@ -1,0 +1,99 @@
+name: 构建 Debug APK
+
+on:
+  push:
+    branches: ["build-debug-apk"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-debug-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: assembleDebug
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: 配置 Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # runner 每次都会现生成 debug.keystore，导致各次构建签名不同、无法覆盖安装。
+      # 这里把 keystore 缓存下来，一次生成长期复用，保证所有 debug 构建签名一致（覆盖安装不再冲突）。
+      - name: 恢复固定的 Debug 签名
+        id: debug-keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: eta-debug-keystore-v1
+
+      - name: 生成 Debug 签名（仅首次）
+        if: steps.debug-keystore.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+          test -s "$HOME/.android/debug.keystore"
+
+      - name: 打印签名指纹（用于跨构建比对）
+        run: |
+          set -uo pipefail
+          echo "cache-hit=${{ steps.debug-keystore.outputs.cache-hit }}"
+          ls -l "$HOME/.android/debug.keystore"
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android \
+            | grep 'SHA256:' | head -n 1 | sed 's/^ *//' \
+            | tee "$RUNNER_TEMP/eta-debug-fingerprint.txt"
+
+      - name: 接受 Android SDK 许可证
+        run: |
+          set -euo pipefail
+          sdkmanager="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          if [[ -z "$sdkmanager" ]]; then
+            echo "::error::未找到 sdkmanager"
+            exit 1
+          fi
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" --channel=3 "platforms;android-37.0"
+
+      - name: 构建 Debug APK
+        # 真机验证用；包含 dsh 安装 profile
+        run: ./gradlew --no-daemon --no-configuration-cache :app:assembleDebug
+
+      - name: 上传 Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: eta-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 发布为 Release（便于手机直接下载安装）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          apk="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          test -s "$apk"
+          gh release delete ubuntu-preview --repo "${{ github.repository }}" --yes || true
+          gh release create ubuntu-preview "$apk" \
+            --repo "${{ github.repository }}" \
+            --title "Linux 环境预览版（含 dsh）" \
+            --target "${{ github.sha }}" \
+            --notes "含 DeepSeek Harness (dsh) 安装 profile 的 debug 构建，仅用于真机验证。"
