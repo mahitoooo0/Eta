@@ -526,6 +526,7 @@ internal class DetachedTaskSupervisor(
         environment = when (optString("environment")) {
             TerminalEnvironment.ALPINE.wireName -> TerminalEnvironment.ALPINE
             TerminalEnvironment.DEBIAN.wireName -> TerminalEnvironment.DEBIAN
+            TerminalEnvironment.UBUNTU.wireName -> TerminalEnvironment.UBUNTU
             else -> TerminalEnvironment.ANDROID
         },
         logPath = getString("log_path"),
