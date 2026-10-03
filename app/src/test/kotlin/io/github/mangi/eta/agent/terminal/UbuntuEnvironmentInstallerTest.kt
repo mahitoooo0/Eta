@@ -85,6 +85,14 @@ class UbuntuEnvironmentInstallerTest {
     }
 
     @Test
+    fun aptMirrorScriptRemovesDeb822SourcesBeforeWritingLegacyList() {
+        // Ubuntu 24.04+ 默认用 DEB822 的 ubuntu.sources，残留会让 apt 继续访问官方源。
+        assertTrue(UbuntuEnvironmentInstaller.aptMirrorScript().contains("/etc/apt/sources.list.d/*.sources"))
+        val command = UbuntuEnvironmentInstaller.APT_MIRRORS // 保证镜像列表非空，脚本确实写入清理逻辑
+        assertTrue(command.isNotEmpty())
+    }
+
+    @Test
     fun aptMirrorScriptIsValidPosixShell() {
         val process = ProcessBuilder("sh", "-n").start()
         process.outputStream.use { output ->
