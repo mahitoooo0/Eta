@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -43,6 +44,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 四类插件的安装动作耗时差异很大（pnpm 拉包可能好几分钟），所以每条都自带独立状态，
  * 失败时把命令输出尾部直接显示出来——否则用户只会看到"点了没反应"。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DshPluginLibrarySheet(
     installer: DshPluginInstaller,
@@ -171,7 +173,7 @@ private fun DshPluginRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = androidx.compose.ui.res.stringResource(entry.titleRes),
-                    style = MiuixTheme.textStyles.titleSmall,
+                    style = MiuixTheme.textStyles.body2,
                 )
                 Text(
                     text = androidx.compose.ui.res.stringResource(entry.summaryRes),
@@ -182,7 +184,7 @@ private fun DshPluginRow(
                 badge?.let {
                     Text(
                         text = it,
-                        style = MiuixTheme.textStyles.body2,
+                        style = MiuixTheme.textStyles.footnote1,
                         color = MiuixTheme.colorScheme.onSurfaceVariantActions,
                     )
                 }
