@@ -1113,6 +1113,9 @@
   <string name="linux_kimi_tools">Kimi Code</string>
   <string name="linux_kimi_tools_summary">Install the latest Kimi Code release via npm; requires the Node.js environment first</string>
   <string name="linux_kimi_tools_ready">Kimi Code is ready; run kimi in the terminal</string>
+  <string name="linux_dsh_tools">DeepSeek Harness</string>
+  <string name="linux_dsh_tools_summary">Install the latest DeepSeek Harness (dsh) via npm; requires the Node.js environment first</string>
+  <string name="linux_dsh_tools_ready">DeepSeek Harness is ready; run dsh in the terminal</string>
   <string name="linux_profile_dependency_missing">Install %1$s first</string>
   <string name="linux_kimi_web_launch">Launch Web UI</string>
   <string name="linux_kimi_web_starting">Starting…</string>
