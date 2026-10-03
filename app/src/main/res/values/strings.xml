@@ -1116,12 +1116,6 @@
   <string name="linux_dsh_tools">DeepSeek Harness</string>
   <string name="linux_dsh_tools_summary">Install the latest DeepSeek Harness (dsh) via npm; requires the Node.js environment first</string>
   <string name="linux_dsh_tools_ready">DeepSeek Harness is ready; run dsh in the terminal</string>
-  <string name="linux_dsh_web_failed_start">Could not start dsh Web</string>
-  <string name="linux_dsh_web_failed_port">dsh Web did not open port 3080 in time; the first start can be slow, try again</string>
-  <string name="linux_dsh_web_failed_browser">No browser available</string>
-  <string name="linux_dsh_web_failed_env">Linux environment is not ready</string>
-  <string name="linux_dsh_web_failed_root">Root access is required</string>
-  <string name="linux_dsh_plugin_busy">Working</string>
   <string name="linux_dsh_plugin_library">Plugin Library</string>
   <string name="linux_dsh_plugin_open">Plugins</string>
   <string name="linux_dsh_plugin_install">Install</string>
@@ -1134,6 +1128,7 @@
   <string name="linux_dsh_plugin_dsh_not_ready">Install DeepSeek Harness first</string>
   <string name="linux_dsh_plugin_install_done">Installed</string>
   <string name="linux_dsh_plugin_uninstall_done">Removed</string>
+  <string name="linux_dsh_plugin_busy">Working</string>
   <string name="linux_dsh_plugin_failed">Operation failed</string>
   <string name="linux_dsh_plugin_category_plugin">Harness plugins</string>
   <string name="linux_dsh_plugin_category_mcp">MCP servers</string>
@@ -1143,6 +1138,11 @@
   <string name="linux_dsh_web_starting">Starting</string>
   <string name="linux_dsh_web_stop">Stop</string>
   <string name="linux_dsh_web_running">Web running</string>
+  <string name="linux_dsh_web_failed_start">Could not start dsh Web</string>
+  <string name="linux_dsh_web_failed_port">dsh Web did not open port 3080 in time; the first start can be slow, try again</string>
+  <string name="linux_dsh_web_failed_browser">No browser available</string>
+  <string name="linux_dsh_web_failed_env">Linux environment is not ready</string>
+  <string name="linux_dsh_web_failed_root">Root access is required</string>
   <string name="linux_dsh_plugin_market_title">Plugin Market</string>
   <string name="linux_dsh_plugin_market_summary">One-stop manager for skills, commands, personas, MCP and LSP; understands Claude Code, Codex, Cursor and Kimi plugin layouts</string>
   <string name="linux_dsh_plugin_subagent_cc_title">Claude Code subagent</string>
@@ -1172,7 +1172,7 @@
   <string name="linux_dsh_skill_web_digest_title">Web digest</string>
   <string name="linux_dsh_skill_web_digest_summary">Turn long pages into actionable points instead of restating them</string>
   <string name="linux_dsh_skill_repo_brief_title">Repo brief</string>
-  <string name="linux_dsh_skill_repo_brief_summary">Understand an unfamiliar repo's layout, build steps and risks quickly</string>
+  <string name="linux_dsh_skill_repo_brief_summary">Understand the layout, build steps and risks of an unfamiliar repo</string>
   <string name="linux_dsh_skill_daily_report_title">Daily report</string>
   <string name="linux_dsh_skill_daily_report_summary">Produce a daily or weekly report from real work traces, never invented</string>
   <string name="linux_dsh_skill_change_review_title">Change review</string>

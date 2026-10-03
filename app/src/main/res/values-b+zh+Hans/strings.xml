@@ -1131,12 +1131,6 @@
   <string name="linux_dsh_tools">DeepSeek Harness</string>
   <string name="linux_dsh_tools_summary">通过 npm 安装最新版 DeepSeek Harness（dsh）；需要先安装 Node.js 环境</string>
   <string name="linux_dsh_tools_ready">DeepSeek Harness 已就绪，在终端运行 dsh 即可开始</string>
-  <string name="linux_dsh_web_failed_start">无法启动 dsh Web</string>
-  <string name="linux_dsh_web_failed_port">dsh Web 未能在预期时间内监听 3080 端口；首次启动较慢，请稍后再试</string>
-  <string name="linux_dsh_web_failed_browser">没有可用浏览器</string>
-  <string name="linux_dsh_web_failed_env">Linux 环境尚未就绪</string>
-  <string name="linux_dsh_web_failed_root">需要 Root 权限</string>
-  <string name="linux_dsh_plugin_busy">处理中</string>
   <string name="linux_dsh_plugin_library">插件库</string>
   <string name="linux_dsh_plugin_open">插件</string>
   <string name="linux_dsh_plugin_install">安装</string>
@@ -1149,6 +1143,7 @@
   <string name="linux_dsh_plugin_dsh_not_ready">请先安装 DeepSeek Harness</string>
   <string name="linux_dsh_plugin_install_done">安装完成</string>
   <string name="linux_dsh_plugin_uninstall_done">已卸载</string>
+  <string name="linux_dsh_plugin_busy">处理中</string>
   <string name="linux_dsh_plugin_failed">操作失败</string>
   <string name="linux_dsh_plugin_category_plugin">dsh 插件</string>
   <string name="linux_dsh_plugin_category_mcp">MCP 服务器</string>
@@ -1158,6 +1153,11 @@
   <string name="linux_dsh_web_starting">正在启动</string>
   <string name="linux_dsh_web_stop">停止</string>
   <string name="linux_dsh_web_running">Web 运行中</string>
+  <string name="linux_dsh_web_failed_start">无法启动 dsh Web</string>
+  <string name="linux_dsh_web_failed_port">dsh Web 未能在预期时间内监听 3080 端口；首次启动较慢，请稍后再试</string>
+  <string name="linux_dsh_web_failed_browser">没有可用浏览器</string>
+  <string name="linux_dsh_web_failed_env">Linux 环境尚未就绪</string>
+  <string name="linux_dsh_web_failed_root">需要 Root 权限</string>
   <string name="linux_dsh_plugin_market_title">插件市场</string>
   <string name="linux_dsh_plugin_market_summary">一站式管理技能、命令、代理角色、MCP 与 LSP，兼容 Claude Code、Codex、Cursor、Kimi 等插件布局</string>
   <string name="linux_dsh_plugin_subagent_cc_title">Claude Code 子智能体</string>
