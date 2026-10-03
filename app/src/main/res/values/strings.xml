@@ -1123,7 +1123,8 @@
   <string name="linux_dsh_plugin_installed">Installed</string>
   <string name="linux_dsh_plugin_empty">Nothing to install in this category</string>
   <string name="linux_dsh_plugin_needs_token">Needs your own credentials</string>
-  <string name="linux_dsh_plugin_restart_hint">Restart dsh Web for plugin changes to take effect</string>
+  <string name="linux_dsh_plugin_restart_hint">Skills and MCP take effect at once; harness plugins and CLI agents need a dsh Web restart</string>
+  <string name="linux_dsh_plugin_timeout">Timed out; check the network and try again</string>
   <string name="linux_dsh_plugin_probe_failed">Could not read the installed list</string>
   <string name="linux_dsh_plugin_dsh_not_ready">Install DeepSeek Harness first</string>
   <string name="linux_dsh_plugin_install_done">Installed</string>

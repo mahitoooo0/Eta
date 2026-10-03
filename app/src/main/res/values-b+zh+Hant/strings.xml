@@ -1132,7 +1132,8 @@
   <string name="linux_dsh_plugin_installed">已安装</string>
   <string name="linux_dsh_plugin_empty">此分类暂无可安装项目</string>
   <string name="linux_dsh_plugin_needs_token">需要自备凭证</string>
-  <string name="linux_dsh_plugin_restart_hint">外挂安装后需重新启动 dsh Web 才会生效</string>
+  <string name="linux_dsh_plugin_restart_hint">技能與 MCP 立即生效；dsh 外掛與 CLI agent 需要重新啟動 dsh Web</string>
+  <string name="linux_dsh_plugin_timeout">操作逾時，請檢查網路後重試</string>
   <string name="linux_dsh_plugin_probe_failed">读取已安装清单失败</string>
   <string name="linux_dsh_plugin_dsh_not_ready">请先安装 DeepSeek Harness</string>
   <string name="linux_dsh_plugin_install_done">安装完成</string>

@@ -28,8 +28,11 @@ import io.github.mangi.eta.agent.terminal.DshPluginCategory
 import io.github.mangi.eta.agent.terminal.DshPluginEntry
 import io.github.mangi.eta.agent.terminal.DshPluginFailure
 import io.github.mangi.eta.agent.terminal.DshPluginInstaller
+import io.github.mangi.eta.agent.terminal.DshPluginProbeFailure
 import io.github.mangi.eta.agent.terminal.DshPluginResult
 import io.github.mangi.eta.agent.terminal.DshPluginCatalog
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -48,9 +51,9 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 internal fun DshPluginLibrarySheet(
     installer: DshPluginInstaller,
+    actionScope: CoroutineScope,
     onDismiss: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var category by remember { mutableStateOf(DshPluginCategory.DSH_PLUGIN) }
     var installed by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -60,8 +63,16 @@ internal fun DshPluginLibrarySheet(
     var messageDetail by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(installer) {
-        // 探测失败也要把列表放出来，只是状态显示不出来。
-        installer.probeInstalled().onSuccess { installed = it }
+        // 探测失败也要把列表放出来，但必须让用户看见「读不到」而不是「什么都没装」。
+        val result = installer.probeInstalled()
+        result.onSuccess { installed = it }
+        result.onFailure { error ->
+            probed = false
+            messageRes = when ((error as? Pair<*, *>)?.first) {
+                DshPluginProbeFailure.DSH_NOT_READY -> R.string.linux_dsh_plugin_dsh_not_ready
+                else -> R.string.linux_dsh_plugin_probe_failed
+            }
+        }
         probed = true
     }
 
@@ -117,18 +128,29 @@ internal fun DshPluginLibrarySheet(
                             busyId = entry.id
                             messageRes = null
                             messageDetail = null
-                            scope.launch {
-                                val result = if (entry.id in installed) {
-                                    installer.uninstall(entry)
-                                } else {
-                                    installer.install(entry)
+                            // 用屏幕级 scope：关掉面板不该把写配置写到一半的安装打断。
+                            actionScope.launch {
+                                try {
+                                    val result = if (entry.id in installed) {
+                                        installer.uninstall(entry)
+                                    } else {
+                                        installer.install(entry)
+                                    }
+                                    if (result is DshPluginResult.Failed) {
+                                        messageRes = result.messageRes()
+                                        messageDetail = result.output.takeLast(200).ifBlank { null }
+                                    } else {
+                                        messageRes = null
+                                        messageDetail = null
+                                    }
+                                    installed = installer.probeInstalled().getOrDefault(installed)
+                                } catch (error: Throwable) {
+                                    // 不接住的话 busyId 永远清不掉，整个面板会变成死局。
+                                    messageRes = R.string.linux_dsh_plugin_failed
+                                    messageDetail = error.message?.takeLast(200)
+                                } finally {
+                                    busyId = null
                                 }
-                                if (result is DshPluginResult.Failed) {
-                                    messageRes = result.messageRes()
-                                    messageDetail = result.output.takeLast(200).ifBlank { null }
-                                }
-                                installed = installer.probeInstalled().getOrDefault(installed)
-                                busyId = null
                             }
                         },
                     )
@@ -222,7 +244,7 @@ private fun DshPluginCategory.titleRes(): Int = when (this) {
 internal fun DshPluginResult.Failed.messageRes(): Int = when (reason) {
     DshPluginFailure.DSH_NOT_READY -> R.string.linux_dsh_plugin_dsh_not_ready
     DshPluginFailure.SHELL_UNAVAILABLE,
-    DshPluginFailure.PROBE_FAILED,
     DshPluginFailure.COMMAND_FAILED,
     -> R.string.linux_dsh_plugin_failed
+    DshPluginFailure.COMMAND_TIMEOUT -> R.string.linux_dsh_plugin_timeout
 }

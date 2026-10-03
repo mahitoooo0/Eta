@@ -567,7 +567,8 @@ internal fun LinuxEnvironmentScreen(
                                         }
                                         TextButton(
                                             text = stringResource(R.string.linux_dsh_plugin_open),
-                                            enabled = !dshWebLaunching,
+                                            // root 被撤销时打开面板只会让每个操作都必然失败。
+                                            enabled = !dshWebLaunching && !requiresRoot,
                                             colors = ButtonDefaults.textButtonColorsPrimary(),
                                             onClick = { showDshPluginSheet = true },
                                         )
@@ -669,6 +670,7 @@ internal fun LinuxEnvironmentScreen(
     if (showDshPluginSheet) {
         DshPluginLibrarySheet(
             installer = dshPluginInstaller,
+            actionScope = coroutineScope,
             onDismiss = { showDshPluginSheet = false },
         )
     }

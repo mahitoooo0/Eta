@@ -18,6 +18,8 @@ internal object DshSkillContent {
         description: 把一篇长网页或一组链接读成可执行的要点，而不是复述全文。
         ---
 
+        <!-- ${DshPluginCatalog.SKILL_OWNER_MARKER} -->
+
         # 网页速读
 
         适用于「这篇文章讲了什么 / 我该不该读 / 重点是哪几条」这类请求。
@@ -41,6 +43,8 @@ internal object DshSkillContent {
         name: repo-brief
         description: 快速摸清一个陌生仓库的结构、构建方式与风险点，适合接手别人的项目。
         ---
+
+        <!-- ${DshPluginCatalog.SKILL_OWNER_MARKER} -->
 
         # 仓库速览
 
@@ -68,6 +72,8 @@ internal object DshSkillContent {
         description: 从真实工作痕迹生成日报或周报，不编造没有发生过的进展。
         ---
 
+        <!-- ${DshPluginCatalog.SKILL_OWNER_MARKER} -->
+
         # 工作日报
 
         ## 步骤
@@ -89,6 +95,8 @@ internal object DshSkillContent {
         name: change-review
         description: 审查一段改动，按正确性、边界、可测性排序给出可执行的修改意见。
         ---
+
+        <!-- ${DshPluginCatalog.SKILL_OWNER_MARKER} -->
 
         # 改动审查
 

@@ -32,7 +32,8 @@ internal sealed interface DshWebLaunchResult {
  *
  * 与 [KimiWebLauncher] 的差别：dsh 的监听地址与端口是固定的（日志里也不一定给可解析的 URL），
  * 所以不解析日志，而是直接探测 127.0.0.1:3080 是否已经 accepting，再交给系统浏览器。
- * 插件库装完技能或 MCP 后需要重启 dsh 才生效，这个入口就是为此准备的。
+ * 插件库装完技能或 MCP 后不需要重启（dsh 会热重载这两处），但装完 dsh 插件或 CLI agent
+ * 需要重启才生效——这个入口就是为此准备的。
  */
 internal class DshWebLauncher(
     private val context: Context,
@@ -51,11 +52,15 @@ internal class DshWebLauncher(
         }
         val backend = LinuxEnvironmentPaths.backendOf(rootfs.absolutePath)
 
-        // 已经在跑就直接开浏览器，别重复起一个服务抢端口。
+        // 已经在跑就直接开浏览器，别重复起一个服务抢端口；
+        // 但「在跑却没监听」说明它是上次失败留下的僵尸，先清掉再重起，
+        // 否则它会一直占着记录让后续启动永远判定失败。
         val existing = findTask(environment, identity, backend)
         if (existing != null && existing.running) {
             if (awaitPort(waitAttempts = 1)) return@withContext openInBrowser()
-            return@withContext DshWebLaunchResult.Failed("PORT_NOT_OPEN")
+            if (!daemonSupervisor.stop(existing.task.id)) {
+                return@withContext DshWebLaunchResult.Failed("ZOMBIE_STOP_FAILED")
+            }
         }
         val taskId = when (val started = daemonSupervisor.start(
             command = COMMAND,
@@ -67,8 +72,10 @@ internal class DshWebLauncher(
             is DaemonStartResult.Failed -> return@withContext DshWebLaunchResult.Failed(started.code)
         }
         if (!awaitPort()) {
-            // 起不来就别留一个僵尸任务占着位置。
-            daemonSupervisor.stop(taskId)
+            // 起不来就别留一个僵尸任务占着位置；诊断信息随任务日志一起留在守护任务里。
+            if (!daemonSupervisor.stop(taskId)) {
+                return@withContext DshWebLaunchResult.Failed("ZOMBIE_STOP_FAILED")
+            }
             return@withContext DshWebLaunchResult.Failed("PORT_TIMEOUT")
         }
         openInBrowser()
@@ -82,11 +89,9 @@ internal class DshWebLauncher(
         val identity = TerminalRuntime.defaultIdentity(environment, rootfs.path)
         val task = findTask(environment, identity, LinuxEnvironmentPaths.backendOf(rootfs.path))
             ?: return@withContext DshWebRuntimeStatus()
-        DshWebRuntimeStatus(
-            taskId = task.task.id,
-            running = task.running && portOpen(),
-            url = URL.takeIf { task.running && portOpen() },
-        )
+        // 端口只探一次：探两次会出现「running=true 但 url=null」的自相矛盾状态。
+        val serving = task.running && portOpen()
+        DshWebRuntimeStatus(taskId = task.task.id, running = serving, url = URL.takeIf { serving })
     }
 
     suspend fun stop(environment: TerminalEnvironment): Boolean = withContext(Dispatchers.IO) {
@@ -145,7 +150,7 @@ internal class DshWebLauncher(
         /** dsh 的工作目录固定为 /workspace，与 profile 解析保持一致。 */
         const val WORKDIR = "/workspace"
 
-        private const val DEFAULT_WAIT_ATTEMPTS = 40
+        private const val DEFAULT_WAIT_ATTEMPTS = 90
         private const val WAIT_INTERVAL_MS = 500L
         private const val PROBE_TIMEOUT_MS = 500
     }

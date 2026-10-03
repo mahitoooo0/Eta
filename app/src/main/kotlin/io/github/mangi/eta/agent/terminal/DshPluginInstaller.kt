@@ -14,11 +14,17 @@ internal enum class DshPluginFailure {
     /** 没能启动 chroot 内的 shell。 */
     SHELL_UNAVAILABLE,
 
-    /** 探测已装状态失败。 */
-    PROBE_FAILED,
+    /** 命令超时（InstallerShellRunner 的 -2）。 */
+    COMMAND_TIMEOUT,
 
     /** 安装/卸载命令返回非零。 */
     COMMAND_FAILED,
+}
+
+/** 探测失败的原因，供 UI 区分「dsh 没装好」与「shell 起不来」。 */
+internal enum class DshPluginProbeFailure {
+    DSH_NOT_READY,
+    SHELL_FAILED,
 }
 
 internal sealed interface DshPluginResult {
@@ -48,20 +54,26 @@ internal class DshPluginInstaller(
      * 逐条下发会让每个条目各起一次 shell（十几秒到几十秒），所以拼成一条脚本一次跑完，
      * 用固定前缀的行标记解析结果。
      */
-    suspend fun probeInstalled(): Result<Set<String>> = withContext(Dispatchers.IO) {
-        if (!dshReady()) return@withContext Result.failure(IllegalStateException("dsh is not installed"))
-        val result = run(DshPluginCatalog.probeScript(), PROBE_TIMEOUT_SECONDS)
-        val ids = parseProbeOutput(result.output)
-        if (result.exitCode != 0) {
-            AndroidAgentLogger.warn(
-                "Dsh plugin probe outcome=failed exitCode=${result.exitCode} " +
-                    "outputChars=${result.output.length}",
-            )
-            return@withContext Result.failure(
-                IllegalStateException("dsh plugin probe failed: ${result.output.takeLast(200)}"),
-            )
+    /**
+     * 探测也要取锁：否则可能出现探测与安装同时跑，读到 `cat >>` 的中间态而误报「未安装」。
+     */
+    suspend fun probeInstalled(): Result<Set<String>> = installMutex.withLock {
+        withContext(Dispatchers.IO) {
+            if (!dshReady()) {
+                return@withContext Result.failure(DshPluginProbeFailure.DSH_NOT_READY)
+            }
+            val result = run(DshPluginCatalog.probeScript(), PROBE_TIMEOUT_SECONDS)
+            if (result.exitCode != 0) {
+                AndroidAgentLogger.warn(
+                    "Dsh plugin probe outcome=failed exitCode=${result.exitCode} " +
+                        "outputChars=${result.output.length}",
+                )
+                return@withContext Result.failure(
+                    DshPluginProbeFailure.SHELL_FAILED to result.output.takeLast(200),
+                )
+            }
+            Result.success(parseProbeOutput(result.output))
         }
-        Result.success(ids)
     }
 
     suspend fun install(entry: DshPluginEntry): DshPluginResult =
@@ -81,10 +93,17 @@ internal class DshPluginInstaller(
             val result = run(command, timeoutSeconds)
             AndroidAgentLogger.info(
                 "Dsh plugin action=$action id=${entry.id} kind=${entry.installKind} " +
-                    "exitCode=${result.exitCode} outputChars=${result.output.length}",
+                    "exitCode=${result.exitCode} outputChars=${result.output.length}" +
+                    (if (result.exitCode == 0) "" else " tail=" + result.output.takeLast(200)),
             )
             if (result.exitCode == SHELL_UNAVAILABLE_EXIT) {
                 return@withContext DshPluginResult.Failed(DshPluginFailure.SHELL_UNAVAILABLE)
+            }
+            if (result.exitCode == COMMAND_TIMEOUT_EXIT) {
+                return@withContext DshPluginResult.Failed(
+                    DshPluginFailure.COMMAND_TIMEOUT,
+                    result.output.takeLast(400),
+                )
             }
             if (result.exitCode != 0) {
                 return@withContext DshPluginResult.Failed(
@@ -122,5 +141,8 @@ internal class DshPluginInstaller(
 
         /** InstallerShellRunner 用 -1 表示 shell 都没起来。 */
         const val SHELL_UNAVAILABLE_EXIT = -1
+
+        /** InstallerShellRunner 用 -2 表示超时。烂网络上装大包是能撞到的。 */
+        const val COMMAND_TIMEOUT_EXIT = -2
     }
 }

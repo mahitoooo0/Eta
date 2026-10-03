@@ -6,18 +6,18 @@ import io.github.mangi.eta.R
 /**
  * 插件库分类。四个分类对应四种完全不同的落地方式，不能混为一谈。
  */
-internal enum class DshPluginCategory {
+internal enum class DshPluginCategory(val installKind: DshPluginInstallKind) {
     /** 通过 `dsh plugin --profile <name> add` 安装的 dsh 插件包。 */
-    DSH_PLUGIN,
+    DSH_PLUGIN(DshPluginInstallKind.DSH_PLUGIN),
 
     /** 通过 `$DSH_HOME/cordis.patch.yml` 追加 patch 条目启用的 MCP 服务器。 */
-    MCP_SERVER,
+    MCP_SERVER(DshPluginInstallKind.MCP_SERVER),
 
     /** 写入 `$DSH_HOME/skills/<dir>/SKILL.md` 的 Agent 技能。 */
-    AGENT_SKILL,
+    AGENT_SKILL(DshPluginInstallKind.SKILL_FILE),
 
     /** 通过 `npm install -g` 安装的独立 CLI agent。 */
-    CLI_AGENT,
+    CLI_AGENT(DshPluginInstallKind.NPM_GLOBAL),
 }
 
 /** 插件的落地方式；每一种的安装、卸载与探测命令都不同。 */
@@ -47,15 +47,26 @@ internal data class DshPluginEntry(
     /** 需要用户自备凭据（如 GitHub token），UI 上要显式提示。 */
     val requiresToken: Boolean = false,
 ) {
+    /** 技能安装时写进 SKILL.md 的归属标记；探测与卸载都靠它避免误删用户自己写的同名技能。 */
+    const val SKILL_OWNER_MARKER = "managed-by: eta-plugin-library"
+
     init {
         require(id.isNotBlank()) { "plugin id must not be blank" }
+        // 分类与安装方式必须一一对应；漂移会让 UI 归类与实际安装行为不一致。
+        require(category.installKind == installKind) {
+            "$id: 分类 $category 与安装方式 $installKind 不匹配"
+        }
         when (installKind) {
-            // 这三类都以 npm 包为身份，缺包名就没法拼安装命令。
-            DshPluginInstallKind.DSH_PLUGIN,
-            DshPluginInstallKind.MCP_SERVER,
-            DshPluginInstallKind.NPM_GLOBAL,
-            -> require(!packageName.isNullOrBlank()) { "$id requires packageName" }
-
+            // DSH_PLUGIN / NPM_GLOBAL 是安装目标；MCP_SERVER 只是 npx 拉起的包名。
+            DshPluginInstallKind.DSH_PLUGIN -> require(!packageName.isNullOrBlank()) { "$id requires packageName" }
+            DshPluginInstallKind.NPM_GLOBAL -> {
+                require(!packageName.isNullOrBlank()) { "$id requires packageName" }
+                require(!commandName.isNullOrBlank()) { "$id requires commandName" }
+            }
+            DshPluginInstallKind.MCP_SERVER -> {
+                require(!packageName.isNullOrBlank()) { "$id requires packageName" }
+                require(!serverName.isNullOrBlank()) { "$id requires serverName" }
+            }
             DshPluginInstallKind.SKILL_FILE -> require(
                 !skillDirName.isNullOrBlank() && !skillBody.isNullOrBlank(),
             ) { "$id requires skillDirName and skillBody" }
@@ -250,7 +261,8 @@ internal object DshPluginCatalog {
             append("fi\n")
             // 没装过就别去 remove，避免 pnpm 因找不到依赖报错导致整个卸载失败。
             append("if grep -q '").append(pkg).append("' \"${'$'}HOME/.dsh/profiles/")
-                .append(PROFILE).append("/package.json\" 2>/dev/null; then\n")
+                .append(PROFILE).append("/package.json\" \"${'$'}HOME/.dsh/profiles/")
+                .append(PROFILE).append("/pnpm-lock.yaml\" 2>/dev/null; then\n")
             append("  dsh plugin --profile ").append(PROFILE).append(" remove ").append(pkg).append('\n')
             append("fi\n")
         }
@@ -260,69 +272,101 @@ internal object DshPluginCatalog {
      * MCP 条目写进 home 级 cordis.patch.yml，对所有 profile 生效。
      * 每个服务器占一对独立标记，卸载时按标记整段删除，不碰用户自己写的部分。
      */
-    private fun mcpInstallScript(entry: DshPluginEntry): String {
-        val server = requireNotNull(entry.serverName)
-        val block = mcpBlock(entry)
-        return buildString {
-            append("set -e\n")
-            append(mcpRemoveBlockCommand(server))
-            append(mcpFileCommand())
-            append("cat >> \"${'$'}HOME/.dsh/cordis.patch.yml\" <<'ETA_MCP_EOF'\n")
-            append(block)
-            append("ETA_MCP_EOF\n")
-            append("grep -q 'eta-mcp-").append(server).append("' \"${'$'}HOME/.dsh/cordis.patch.yml\"\n")
-        }
-    }
+    private fun mcpInstallScript(entry: DshPluginEntry): String = mcpScript(entry, install = true)
 
-    private fun mcpUninstallScript(entry: DshPluginEntry): String {
-        val server = requireNotNull(entry.serverName)
-        return buildString {
-            append("set -e\n")
-            append(mcpRemoveBlockCommand(server))
-            append(mcpFileCommand())
-            append("if grep -q 'eta-mcp-").append(server)
-                .append("' \"${'$'}HOME/.dsh/cordis.patch.yml\"; then exit 1; fi\n")
-        }
-    }
-
-    private fun mcpRemoveBlockCommand(server: String): String =
-        "sed -i '/^# >>> eta mcp $server >>>$/,/^# <<< eta mcp $server <<<$/{d}' \"${'$'}HOME/.dsh/cordis.patch.yml\" 2>/dev/null || true\n"
+    private fun mcpUninstallScript(entry: DshPluginEntry): String = mcpScript(entry, install = false)
 
     /**
-     * 确保文件存在**且以换行结尾**。
+     * MCP 条目写进 home 级 `cordis.patch.yml`，对所有 profile 生效。
      *
-     * 少了这一步，用户文件末尾若没有换行，`cat >>` 会把托管块接到最后一行屁股上，
-     * 直接把用户配置写坏（YAML 结构被拼坏，dsh 启动时报 patch 解析失败）。
+     * 这里刻意**不用 sed 的地址区间**去删托管块：`/起始标记/,/结束标记/` 在结束标记缺失时
+     * 会一路匹配到文件末尾，把用户自己写的配置全部删掉。而半截块恰恰是可能出现的——
+     * 写到一半被中断（关掉安装中的面板就会触发）就会留下有开始标记、没有结束标记的文件。
+     *
+     * 改用 Node 脚本（dsh 本身就依赖 node，客户机里一定有）做四件事：
+     * 1. 结束标记缺失就**拒绝动文件**并以非 0 退出，宁可不装也不毁配置；
+     * 2. 写之前把原文件备份成 `cordis.patch.yml.eta-bak`，用户可自己恢复；
+     * 3. 临时文件 + `rename` 原子落盘，不会留下写一半的文件；
+     * 4. 校验**结束标记**（而不是开始标记）确实在文件里，才算装成功。
      */
-    private fun mcpFileCommand(): String =
-        "mkdir -p \"${'$'}HOME/.dsh\"\n" +
-            "f=\"${'$'}HOME/.dsh/cordis.patch.yml\"\n" +
-            "[ -f \"\$f\" ] || : > \"\$f\"\n" +
-            // tail -c1 的 wc -l 为 0 表示最后一个字节不是换行
-            "if [ -s \"\$f\" ] && [ \"\$(tail -c1 \"\$f\" | wc -l)\" -eq 0 ]; then printf '\\n' >> \"\$f\"; fi\n"
-
-    private fun mcpBlock(entry: DshPluginEntry): String {
-        val pkg = requireNotNull(entry.packageName)
+    private fun mcpScript(entry: DshPluginEntry, install: Boolean): String {
         val server = requireNotNull(entry.serverName)
         return buildString {
-            append("# >>> eta mcp ").append(server).append(" >>>\n")
-            append("# 由代鱼插件库管理，勿手改；改动会在下次安装/卸载时被覆盖。\n")
-            append("- insert:\n")
-            append("    - id: eta-mcp-").append(server).append('\n')
-            append("      name: '@deepseek-ai/dsh-mcp-client'\n")
-            append("      config:\n")
-            append("        serverName: ").append(server).append('\n')
-            append("        transport: stdio\n")
-            append("        command: npx\n")
-            append("        args: ['-y', '").append(pkg).append("']\n")
-            append("        env:\n")
-            append("          npm_config_registry: ").append(MIRROR_REGISTRY).append('\n')
-            if (entry.requiresToken) {
-                append("          GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN\n")
-            }
-            append("# <<< eta mcp ").append(server).append(" <<<\n")
+            append("set -e\n")
+            append("ETA_MCP_MODE=").append(if (install) "install" else "uninstall")
+                .append(" ETA_MCP_SERVER=").append(server)
+                .append(" ETA_MCP_PKG=").append(requireNotNull(entry.packageName))
+                .append(" ETA_MCP_TOKEN=").append(if (entry.requiresToken) "1" else "0")
+                .append(" node <<'ETA_MCP_NODE_EOF'\n")
+            append(MCP_NODE_SCRIPT)
+            append("ETA_MCP_NODE_EOF\n")
         }
     }
+
+    /**
+     * 在 chroot 内执行的 Node 脚本。整段没有 shell 插值，heredoc 用单引号定界即可；
+     * 脚本里的 `\n` 由 JS 自己解析，这里保持字面两字符。
+     */
+    private val MCP_NODE_SCRIPT = """
+        const fs = require('fs');
+        const path = require('path');
+        const dir = path.join(process.env.HOME, '.dsh');
+        const file = path.join(dir, 'cordis.patch.yml');
+        const server = process.env.ETA_MCP_SERVER;
+        const pkg = process.env.ETA_MCP_PKG;
+        const install = process.env.ETA_MCP_MODE === 'install';
+        const useToken = process.env.ETA_MCP_TOKEN === '1';
+        const START = '# >>> eta mcp ' + server + ' >>>';
+        const END = '# <<< eta mcp ' + server + ' <<<';
+        const BAIL = 3;
+        const VERIFY_FAIL = 4;
+        fs.mkdirSync(dir, { recursive: true });
+        let text = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+        if (text.length > 0 && !text.endsWith('\n')) text += '\n';
+        if (text.indexOf(START) >= 0) {
+          const from = text.indexOf(START);
+          const to = text.indexOf(END, from);
+          if (to < 0) {
+            console.error('eta: managed block for ' + server + ' is truncated (end marker missing);' +
+              ' refusing to modify ' + file + '. Fix or remove that block by hand.');
+            process.exit(BAIL);
+          }
+          let cut = to + END.length;
+          if (text[cut] === '\n') cut += 1;
+          text = text.slice(0, from) + text.slice(cut);
+        }
+        if (install) {
+          if (text.length > 0 && !text.endsWith('\n')) text += '\n';
+          text += [
+            START,
+            '# 由代鱼插件库管理，勿手改；改动会在下次安装/卸载时被覆盖。',
+            '- insert:',
+            '    - id: eta-mcp-' + server,
+            "      name: '@deepseek-ai/dsh-mcp-client'",
+            '      config:',
+            '        serverName: ' + server,
+            '        transport: stdio',
+            '        command: npx',
+            "        args: ['-y', '" + pkg + "']",
+            '        env:',
+            '          npm_config_registry: MIRROR_PLACEHOLDER',
+            useToken ? '          GITHUB_TOKEN: !!js process.env.GITHUB_TOKEN' : null,
+            END,
+            '',
+          ].filter((line) => line !== null).join('\n');
+        }
+        if (fs.existsSync(file) && fs.statSync(file).size > 0) {
+          fs.copyFileSync(file, file + '.eta-bak');
+        }
+        fs.writeFileSync(file + '.eta-tmp', text);
+        fs.renameSync(file + '.eta-tmp', file);
+        const after = fs.readFileSync(file, 'utf8');
+        const ok = install ? after.indexOf(END) >= 0 : after.indexOf(START) < 0;
+        if (!ok) {
+          console.error('eta: managed block verification failed for ' + server);
+          process.exit(VERIFY_FAIL);
+        }
+    """.trimIndent().replace("MIRROR_PLACEHOLDER", MIRROR_REGISTRY) + "\n"
 
     /**
      * 技能就是 `$DSH_HOME/skills` 下的一个目录加一份 SKILL.md；
@@ -337,16 +381,23 @@ internal object DshPluginCatalog {
             append("cat > \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\" <<'ETA_SKILL_EOF'\n")
             append(body)
             append("ETA_SKILL_EOF\n")
-            append("test -s \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
+            append("grep -q '").append(SKILL_OWNER_MARKER)
+                .append("' \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
         }
     }
 
-    /** 只删自己写的 SKILL.md，再用 rmdir 收掉空目录；目录里若还有别的文件就保留。 */
+    /**
+     * 只删带归属标记的 SKILL.md——用户自己在同名目录写的技能不能被误删。
+     * 之后用 rmdir 收掉空目录；目录里若还有别的文件就保留。
+     */
     private fun skillUninstallScript(entry: DshPluginEntry): String {
         val dir = requireNotNull(entry.skillDirName)
         return buildString {
             append("set -e\n")
-            append("rm -f \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
+            append("f=\"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
+            append("if [ -f \"\$f\" ] && grep -q '").append(SKILL_OWNER_MARKER).append("' \"\$f\"; then\n")
+            append("  rm -f \"\$f\"\n")
+            append("fi\n")
             append("rmdir \"${'$'}HOME/.dsh/skills/").append(dir).append("\" 2>/dev/null || true\n")
         }
     }
@@ -372,12 +423,15 @@ internal object DshPluginCatalog {
     }
 
     private fun probeCommand(entry: DshPluginEntry): String = when (entry.installKind) {
+        // package.json 是 pnpm 写依赖的位置；lockfile 兜底以防版本差异改了落点。
         DshPluginInstallKind.DSH_PLUGIN -> "grep -q '${requireNotNull(entry.packageName)}' " +
-            "\"${'$'}HOME/.dsh/profiles/$PROFILE/package.json\""
+            "\"${'$'}HOME/.dsh/profiles/$PROFILE/package.json\" " +
+            "\"${'$'}HOME/.dsh/profiles/$PROFILE/pnpm-lock.yaml\""
         DshPluginInstallKind.MCP_SERVER ->
             "grep -q 'eta-mcp-${requireNotNull(entry.serverName)}' \"${'$'}HOME/.dsh/cordis.patch.yml\""
         DshPluginInstallKind.SKILL_FILE ->
-            "test -s \"${'$'}HOME/.dsh/skills/${requireNotNull(entry.skillDirName)}/SKILL.md\""
+            "grep -q '$SKILL_OWNER_MARKER' " +
+                "\"${'$'}HOME/.dsh/skills/${requireNotNull(entry.skillDirName)}/SKILL.md\""
         DshPluginInstallKind.NPM_GLOBAL -> "command -v ${requireNotNull(entry.commandName)}"
     }
 }
