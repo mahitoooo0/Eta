@@ -1128,6 +1128,9 @@
   <string name="linux_kimi_tools">Kimi Code</string>
   <string name="linux_kimi_tools_summary">通过 npm 安装最新正式版 Kimi Code；需要先安装 Node.js 环境</string>
   <string name="linux_kimi_tools_ready">Kimi Code 已就绪，在终端运行 kimi 即可开始</string>
+  <string name="linux_dsh_tools">DeepSeek Harness</string>
+  <string name="linux_dsh_tools_summary">通过 npm 安装最新版 DeepSeek Harness（dsh）；需要先安装 Node.js 环境</string>
+  <string name="linux_dsh_tools_ready">DeepSeek Harness 已就绪，在终端运行 dsh 即可开始</string>
   <string name="linux_profile_dependency_missing">需要先安装 %1$s</string>
   <string name="linux_kimi_web_launch">启动 Web UI</string>
   <string name="linux_kimi_web_starting">正在启动…</string>
