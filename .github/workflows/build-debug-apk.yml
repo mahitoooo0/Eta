@@ -54,11 +54,12 @@ jobs:
 
       - name: 打印签名指纹（用于跨构建比对）
         run: |
-          set -euo pipefail
+          set -uo pipefail
           echo "cache-hit=${{ steps.debug-keystore.outputs.cache-hit }}"
+          ls -l "$HOME/.android/debug.keystore"
           keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android \
-            | grep -A1 'Certificate fingerprints' | grep 'SHA256:' \
-            | sed 's/^ *//' | tee "$RUNNER_TEMP/eta-debug-fingerprint.txt"
+            | grep 'SHA256:' | head -n 1 | sed 's/^ *//' \
+            | tee "$RUNNER_TEMP/eta-debug-fingerprint.txt"
 
       - name: 接受 Android SDK 许可证
         run: |
