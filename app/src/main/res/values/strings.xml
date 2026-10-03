@@ -1083,6 +1083,9 @@
   <string name="linux_distribution_debian_summary">glibc environment with broader software compatibility</string>
   <string name="linux_distribution_ubuntu">Ubuntu</string>
   <string name="linux_distribution_ubuntu_summary">Ubuntu glibc environment with the widest package coverage</string>
+  <string name="linux_ubuntu_already_ready">The Ubuntu glibc environment is already ready</string>
+  <string name="linux_ubuntu_base_install_complete">Ubuntu %1$s base installed</string>
+  <string name="linux_ubuntu_install_complete">Ubuntu %1$s and common tools installed</string>
   <string name="linux_install_base">Install base</string>
   <string name="linux_install_base_tools">Install base tools</string>
   <string name="linux_upgrade_tools">Upgrade tools</string>
