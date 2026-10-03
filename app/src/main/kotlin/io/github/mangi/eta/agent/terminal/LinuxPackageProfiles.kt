@@ -43,6 +43,11 @@ internal data class LinuxPackageProfile(
     val specs: Map<LinuxDistribution, LinuxPackageSpec>,
     /** 安装前必须就绪的前置 profile。 */
     val dependsOn: LinuxPackageProfile? = null,
+    /**
+     * 写入完成标记前必须通过的校验命令；用于拦截「npm 报成功但产物不可用」的情况
+     * （例如平台二进制、原生扩展缺失）。任一行非零退出即视为安装失败。
+     */
+    val verifyScript: String? = null,
 ) {
     fun spec(distribution: LinuxDistribution): LinuxPackageSpec = requireNotNull(specs[distribution])
 }
@@ -127,13 +132,43 @@ internal object LinuxPackageProfiles {
         markerName = AlpineEnvironmentPaths.KIMI_TOOLS_MARKER,
         revision = AlpineEnvironmentPaths.KIMI_TOOLS_REVISION,
         dependsOn = NODE,
+        verifyScript = "kimi --version >/dev/null\nkimi web --help >/dev/null",
         specs = mapOf(
             LinuxDistribution.ALPINE to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
             LinuxDistribution.DEBIAN to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
             LinuxDistribution.UBUNTU to LinuxPackageSpec(setupScript = KIMI_INSTALL_SCRIPT),
         ),
     )
-    val ALL = listOf(PYTHON, NODE, SSH, KIMI)
+
+    /**
+     * DeepSeek Harness（dsh）同样由 npm 分发，运行在 Node profile 之上。
+     * 它比 Kimi 多一个原生依赖：`@deepseek-ai/dsh-fs-local` 依赖 koffi，koffi 需要
+     * 预编译二进制，取不到时会退回源码编译（要 cmake + 工具链）。因此这里的安装脚本
+     * 在镜像源失败后先补编译工具链再走官方源重试，覆盖两种情况。
+     * 完成标记前额外校验 `dsh --version`，避免「装上了但跑不起来」被当成成功。
+     */
+    private const val DSH_INSTALL_SCRIPT =
+        "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com " +
+            "@deepseek-ai/dsh@latest || {\n" +
+            "echo 'eta: dsh install failed; adding build toolchain for koffi and retrying'\n" +
+            "if [ -x /usr/local/bin/eta-apt ]; then /usr/local/bin/eta-apt install cmake build-essential; fi\n" +
+            "if [ -x /usr/local/bin/eta-apk ]; then /usr/local/bin/eta-apk install cmake build-base; fi\n" +
+            "npm install -g --prefix /usr/local @deepseek-ai/dsh@latest\n" +
+            "}"
+
+    val DSH = LinuxPackageProfile(
+        id = "dsh",
+        markerName = AlpineEnvironmentPaths.DSH_TOOLS_MARKER,
+        revision = AlpineEnvironmentPaths.DSH_TOOLS_REVISION,
+        dependsOn = NODE,
+        verifyScript = "dsh --version >/dev/null",
+        specs = mapOf(
+            LinuxDistribution.ALPINE to LinuxPackageSpec(setupScript = DSH_INSTALL_SCRIPT),
+            LinuxDistribution.DEBIAN to LinuxPackageSpec(setupScript = DSH_INSTALL_SCRIPT),
+            LinuxDistribution.UBUNTU to LinuxPackageSpec(setupScript = DSH_INSTALL_SCRIPT),
+        ),
+    )
+    val ALL = listOf(PYTHON, NODE, SSH, KIMI, DSH)
 }
 
 internal fun linuxPackageProfileReady(rootfs: File, profile: LinuxPackageProfile): Boolean =
@@ -224,7 +259,7 @@ internal class LinuxPackageProfileInstaller(
         val activateCommand = buildString {
             append("set -e\n")
             spec.setupScript?.let { script -> append(script).append('\n') }
-            if (profile == LinuxPackageProfiles.KIMI) append("kimi --version >/dev/null\nkimi web --help >/dev/null\n")
+            profile.verifyScript?.let { script -> append(script).append('\n') }
             append("cat > /").append(profile.markerName).append(" <<'ETA_PROFILE_EOF'\n")
             append("profile=").append(profile.revision).append('\n')
             append("ETA_PROFILE_EOF\n")
