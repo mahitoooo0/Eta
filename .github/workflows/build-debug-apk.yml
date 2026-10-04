@@ -37,27 +37,28 @@ jobs:
         id: debug-keystore
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: eta-debug-keystore-v1
+          path: ${{ github.workspace }}/.eta-signing/eta-debug.jks
+          key: eta-debug-signing-v2
 
       - name: 生成 Debug 签名（仅首次）
         if: steps.debug-keystore.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.android"
+          mkdir -p "$GITHUB_WORKSPACE/.eta-signing"
           keytool -genkeypair -v \
-            -keystore "$HOME/.android/debug.keystore" \
+            -keystore "$GITHUB_WORKSPACE/.eta-signing/eta-debug.jks" \
             -storepass android -alias androiddebugkey -keypass android \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
-          test -s "$HOME/.android/debug.keystore"
+          test -s "$GITHUB_WORKSPACE/.eta-signing/eta-debug.jks"
 
       - name: 打印签名指纹（用于跨构建比对）
         run: |
           set -uo pipefail
           echo "cache-hit=${{ steps.debug-keystore.outputs.cache-hit }}"
-          ls -l "$HOME/.android/debug.keystore"
-          keytool -list -v -keystore "$HOME/.android/debug.keystore" -storepass android \
+          echo "ANDROID_USER_HOME=${ANDROID_USER_HOME:-<unset>}"
+          ls -l "$GITHUB_WORKSPACE/.eta-signing/eta-debug.jks"
+          keytool -list -v -keystore "$GITHUB_WORKSPACE/.eta-signing/eta-debug.jks" -storepass android \
             | grep 'SHA256:' | head -n 1 | sed 's/^ *//' \
             | tee "$RUNNER_TEMP/eta-debug-fingerprint.txt"
 
@@ -73,7 +74,17 @@ jobs:
           "$sdkmanager" --channel=3 "platforms;android-37.0"
 
       - name: 构建 Debug APK
-        # 真机验证用；包含 Ubuntu 支持、DEB822 清理与文案修复
+        # 真机验证用；包含 Ubuntu 支持、DEB822 清理与文案修复。
+        #
+        # 显式把 keystore 喂给 Gradle：debug buildType 在 hasReleaseSigning 为真时
+        # 会改用指定的 signingConfig（见 app/build.gradle.kts）。此前只把 keystore 放进
+        # ~/.android 就指望 AGP 自己去找，实测 AGP 用的并不是那个文件——结果每次构建
+        # 的 APK 证书都不同，覆盖安装随机失败。
+        env:
+          ETA_RELEASE_STORE_FILE: ${{ github.workspace }}/.eta-signing/eta-debug.jks
+          ETA_RELEASE_STORE_PASSWORD: android
+          ETA_RELEASE_KEY_ALIAS: androiddebugkey
+          ETA_RELEASE_KEY_PASSWORD: android
         run: ./gradlew --no-daemon --no-configuration-cache :app:assembleDebug
 
       # 打印 APK **自身**的证书指纹（不是 keystore 的），用于判断能否覆盖安装。
