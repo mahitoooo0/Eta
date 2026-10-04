@@ -8,7 +8,11 @@ import io.github.mangi.eta.agent.terminal.TerminalEnvironment
 import kotlinx.coroutines.delay
 
 /**
- * dsh 启动和复用的事务边界：只有本次创建且未能打开浏览器的任务才会被回收。
+ * dsh 的启动与复用。
+ *
+ * 刻意**不在失败时回收刚创建的任务**：回收会连诊断现场（daemon 日志）一起删掉，
+ * dsh 起不来时无从排查。残留任务无害——下次启动的预清理会杀掉旧进程，
+ * 记录也会被 list() 的 prune 清理。
  *
  * 与 `KimiWebSession` 同构——dsh 和 kimi 的 Web UI 都不能直接用裸端口访问：
  * 两者都会在就绪时把**带认证信息**的地址打印到日志，必须取那一行才能打开。
@@ -31,48 +35,54 @@ internal class DshWebSession(
         identity: String,
         backend: LinuxExecutionBackend,
     ): DshWebLaunchResult {
-        var createdTaskId: String? = null
-        var opened = false
-        try {
-            val existing = tasks.list().firstOrNull {
-                it.running && it.task.environment == environment && it.task.identity == identity &&
-                    it.task.backend == backend && it.task.command.trim() in COMMANDS
-            }
-            val taskId = existing?.task?.id ?: when (val started = tasks.start(environment, identity)) {
-                is DaemonStartResult.Started -> started.task.id.also { createdTaskId = it }
-                is DaemonStartResult.Failed -> return DshWebLaunchResult.Failed(started.code)
-            }
-            repeat(waitAttempts) {
-                val status = tasks.list().firstOrNull { it.task.id == taskId }
-                if (status == null || !status.running) return DshWebLaunchResult.Failed("DSH_EXITED")
-                val logs = tasks.logs(taskId)
-                if (!logs.ok) return DshWebLaunchResult.Failed(logs.code.ifBlank { "LOGS_UNAVAILABLE" })
-                val url = addressFromLogs(logs.text)
-                if (url != null) {
-                    opened = openUrl(url)
-                    return if (opened) {
-                        DshWebLaunchResult.Opened(url)
-                    } else {
-                        DshWebLaunchResult.Failed("BROWSER_UNAVAILABLE")
-                    }
-                }
-                delay(waitIntervalMs)
-            }
-            return DshWebLaunchResult.Failed("URL_TIMEOUT")
-        } finally {
-            if (!opened) createdTaskId?.let(tasks::stop)
+        val existing = tasks.list().firstOrNull {
+            it.running && it.task.environment == environment && it.task.identity == identity &&
+                it.task.backend == backend && it.task.command.trim() in COMMANDS
         }
+        val taskId = existing?.task?.id ?: when (val started = tasks.start(environment, identity)) {
+            is DaemonStartResult.Started -> started.task.id
+            is DaemonStartResult.Failed -> return DshWebLaunchResult.Failed(started.code)
+        }
+        repeat(waitAttempts) {
+            val status = tasks.list().firstOrNull { it.task.id == taskId }
+            if (status == null || !status.running) return DshWebLaunchResult.Failed("DSH_EXITED")
+            val logs = tasks.logs(taskId)
+            if (!logs.ok) return DshWebLaunchResult.Failed(logs.code.ifBlank { "LOGS_UNAVAILABLE" })
+            val url = addressFromLogs(logs.text)
+            if (url != null) {
+                val opened = openUrl(url)
+                return if (opened) {
+                    DshWebLaunchResult.Opened(url)
+                } else {
+                    DshWebLaunchResult.Failed("BROWSER_UNAVAILABLE")
+                }
+            }
+            delay(waitIntervalMs)
+        }
+        return DshWebLaunchResult.Failed("URL_TIMEOUT")
     }
 
     companion object {
         /**
-         * `--no-open` 必须带：dsh 默认会自己拉起默认浏览器，但 chroot 里没有可用浏览器，
-         * 只会多打一行失败提示。改由 Eta 从日志取地址、用系统浏览器打开。
+         * 启动命令的三件事，缺一不可：
+         *
+         * 1. **代理**：dsh 的 server 端会发起模型请求，而 chroot 内 DNS 不可用
+         *    （Android 拦明文 DNS、代理走 VPN/eBPF 只接管宿主流量），必须走代理。
+         *    daemon 用的是非登录 shell，`/etc/profile.d` 不会自动生效，所以显式 source。
+         * 2. **预清理**：上一轮的 `dsh web` 可能还活着——重装 App 杀不掉 setsid 脱离的
+         *    daemon，重装 rootfs 也杀不掉运行中的进程（文件没了、进程还在内存里）。
+         *    它占着端口，新实例会 EADDRINUSE 秒退。`[d]sh` 是 pkill 的自匹配规避写法：
+         *    本命令的 argv 含字面 `[d]sh web`，正则 `[d]sh web` 匹配的是 `dsh web`，
+         *    所以不会把自己杀掉。
+         * 3. `--no-open` 必须带：chroot 里没有可用浏览器，dsh 自己开只会报错；
+         *    由 Eta 从日志取地址后用系统浏览器打开。
          */
-        const val COMMAND = "dsh web --no-open"
+        const val COMMAND =
+            "if [ -r /etc/profile.d/99eta-proxy.sh ]; then . /etc/profile.d/99eta-proxy.sh; fi; " +
+                "pkill -f '[d]sh web' 2>/dev/null; exec dsh web --no-open"
 
-        /** 复用时两种写法都要认：历史任务可能是用户手动敲的。 */
-        val COMMANDS = setOf(COMMAND, "dsh web")
+        /** 复用时历史写法都要认：旧记录可能是 `dsh web` 或无预清理的版本。 */
+        val COMMANDS = setOf(COMMAND, "dsh web --no-open", "dsh web")
 
         /**
          * 从 `dsh web` 的输出里取回**带认证的**本机地址。
