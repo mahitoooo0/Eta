@@ -71,15 +71,21 @@ internal class DshWebSession(
          *    daemon 用的是非登录 shell，`/etc/profile.d` 不会自动生效，所以显式 source。
          * 2. **预清理**：上一轮的 `dsh web` 可能还活着——重装 App 杀不掉 setsid 脱离的
          *    daemon，重装 rootfs 也杀不掉运行中的进程（文件没了、进程还在内存里）。
-         *    它占着端口，新实例会 EADDRINUSE 秒退。`[d]sh` 是 pkill 的自匹配规避写法：
-         *    本命令的 argv 含字面 `[d]sh web`，正则 `[d]sh web` 匹配的是 `dsh web`，
-         *    所以不会把自己杀掉。
+         *    它占着端口，新实例会 EADDRINUSE 秒退。
+         *
+         *    pkill 的自匹配要防**两层**：pkill 自身的 argv（`[d]sh` 写法可防），以及
+         *    **父 shell 的 cmdline**——daemon 的 `sh -c` 会把整条脚本原样放进 argv，
+         *    脚本里 `exec dsh web` 那段就含 `dsh web` 字样，pkill 一扫就把父 shell 杀了：
+         *    实测症状正是「log 0 字节 + 进程秒死」。所以 exec 段写成 `dsh w''eb`——
+         *    POSIX sh 会把空引号拼掉（`w''eb` == `web`），但 cmdline 里不再有连续的
+         *    `dsh web`，pkill 就不会误伤自己人；exec 之后的 node 进程 cmdline 虽会
+         *    变回 `dsh web`，那时 pkill 早已跑完，且它本就是下一轮要清理的对象。
          * 3. `--no-open` 必须带：chroot 里没有可用浏览器，dsh 自己开只会报错；
          *    由 Eta 从日志取地址后用系统浏览器打开。
          */
         const val COMMAND =
             "if [ -r /etc/profile.d/99eta-proxy.sh ]; then . /etc/profile.d/99eta-proxy.sh; fi; " +
-                "pkill -f '[d]sh web' 2>/dev/null; exec dsh web --no-open"
+                "pkill -f '[d]sh web' 2>/dev/null; exec dsh w''eb --no-open"
 
         /** 复用时历史写法都要认：旧记录可能是 `dsh web` 或无预清理的版本。 */
         val COMMANDS = setOf(COMMAND, "dsh web --no-open", "dsh web")
