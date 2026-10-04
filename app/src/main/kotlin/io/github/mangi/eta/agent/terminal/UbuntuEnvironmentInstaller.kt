@@ -288,6 +288,15 @@ internal class UbuntuEnvironmentInstaller(
             "Ubuntu environment action=install_tools outcome=${if (result.exitCode == 0) "succeeded" else "failed"} " +
                 "exitCode=${result.exitCode} outputChars=${result.output.length}",
         )
+        if (result.exitCode != 0) {
+            // 失败原因（apt 报错原文）只存在于这段输出里，UI 给不了，落到 cacheDir 便于排查。
+            runCatching {
+                java.io.File(context.cacheDir, "eta-profile-failures.log").appendText(
+                    "==== ubuntu install_tools exit=${result.exitCode} ====\n" +
+                        result.output.takeLast(4000) + "\n\n",
+                )
+            }
+        }
         return result.exitCode == 0
     }
 
