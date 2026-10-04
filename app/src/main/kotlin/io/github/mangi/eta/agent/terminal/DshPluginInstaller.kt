@@ -115,6 +115,13 @@ internal class DshPluginInstaller(
                 )
             }
             if (result.exitCode != 0) {
+                // 同样落盘：失败输出只活在面板里，用户一关面板线索就没了。
+                runCatching {
+                    java.io.File(context.cacheDir, "eta-profile-failures.log").appendText(
+                        "==== plugin ${entry.id} (${entry.installKind}) exit=${result.exitCode} ====\n" +
+                            result.output.takeLast(4000) + "\n\n",
+                    )
+                }
                 return@withContext DshPluginResult.Failed(
                     DshPluginFailure.COMMAND_FAILED,
                     result.output.takeLast(400),

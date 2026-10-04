@@ -284,6 +284,17 @@ internal class LinuxPackageProfileInstaller(
                 "exitCode=${result.exitCode} outputChars=${result.output.length}",
         )
         if (result.exitCode != 0) {
+            // 失败时把命令输出落盘。UI 只能给「安装失败，请稍后重试」这类泛化提示，
+            // 真正的原因（npm 报错原文、apt 镜像报错）只存在于这段输出里，
+            // 不落盘就无从定位——dsh 首次安装失败时靠它才查得清。
+            val failureLog = File(context.cacheDir, "eta-profile-failures.log")
+            runCatching {
+                failureLog.appendText(
+                    "==== ${profile.id} @ ${distribution.wireName} exit=${result.exitCode} ====\n" +
+                        result.output.takeLast(4000) + "\n\n",
+                )
+                AndroidAgentLogger.info("Package profile failure detail at ${failureLog.absolutePath}")
+            }
             return@withContext PackageProfileInstallResult.Failed(PackageProfileInstallStage.INSTALLING)
         }
 
