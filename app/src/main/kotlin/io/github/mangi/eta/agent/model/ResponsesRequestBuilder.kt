@@ -74,6 +74,7 @@ internal object ResponsesRequestBuilder {
                 request.put(rule.safeKeyField(), sessionId)
             }
         }
+        GptServiceTier.apply(request, config)
         return request
     }
 

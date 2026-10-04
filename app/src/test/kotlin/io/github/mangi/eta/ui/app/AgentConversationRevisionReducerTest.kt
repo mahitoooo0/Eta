@@ -26,6 +26,25 @@ class AgentConversationRevisionReducerTest {
         assertEquals(before, state)
     }
 
+    @Test fun branchWithoutKeptTextAnchorFailsClosedWhenRemovedAnchorIsMissing() {
+        val state = conversationState().copy(
+            messages = listOf(ThinkingMessageUi("thinking-missing", "thinking", isStreaming = false),
+                UserMessageUi("user-missing", "not stored")),
+            history = emptyList(),
+        )
+        assertNull(AgentConversationRevisionReducer.branchPrefix(state, "thinking-missing"))
+    }
+
+    @Test fun branchCannotUseNextUserToSubstituteForMissingRetainedAssistant() {
+        val state = conversationState().copy(
+            messages = listOf(UserMessageUi("user-first", "first"), AgentMessageUi("assistant-first", "not stored"),
+                UserMessageUi("user-next", "next")),
+            history = listOf(AgentModelClient.ConversationMessage("user", "first", turnId = "first"),
+                AgentModelClient.ConversationMessage("user", "next", turnId = "next")),
+        )
+        assertNull(AgentConversationRevisionReducer.branchPrefix(state, "assistant-first"))
+    }
+
     @Test fun attachmentEnvelopeDifferenceMatchesWithinTheSameTurn() {
         val envelope = "# Files mentioned by the user:\n\n## photo.jpg: /cache/photo.jpg\n\n## My request:\n图里有什么"
         val prefix = listOf(AgentModelClient.ConversationMessage("user", "earlier", turnId = "run-old"),

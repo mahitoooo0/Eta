@@ -13,6 +13,11 @@ import io.github.mangi.eta.agent.delegation.SubAgentConfigKey
 import io.github.mangi.eta.agent.delegation.SubAgentParallelModel
 import io.github.mangi.eta.agent.delegation.SubAgentProfile
 import io.github.mangi.eta.agent.model.ModelFeatureSelection
+import io.github.mangi.eta.data.model.ProviderSetting
+import io.github.mangi.eta.data.model.supportsGptSpeedBinding
+import io.github.mangi.eta.data.repository.ProviderRepository
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collect
@@ -27,8 +32,12 @@ internal sealed interface SubAgentEditorState {
 internal class ConversationSubAgentEditor(
     val owner: SubAgentConfigKey,
     val repository: ConversationSubAgentPreferences,
+    private val providerLookup: suspend (String) -> ProviderSetting?,
     val canEdit: () -> Boolean,
 ) {
+    constructor(owner: SubAgentConfigKey, repository: ConversationSubAgentPreferences, canEdit: () -> Boolean) :
+        this(owner, repository, { id -> ProviderRepository.providerById(id) }, canEdit)
+
     private class LostOwner : RuntimeException()
     private var storedState: SubAgentEditorState by mutableStateOf(SubAgentEditorState.Loading)
     private var lifecycleFailure: (() -> String?)? = null
@@ -108,6 +117,31 @@ internal class ConversationSubAgentEditor(
             }) throw LostOwner()
         old.copy(parallelLimits = old.parallelLimits + (SubAgentParallelModel(providerId, apiModel) to limit))
     }
+    suspend fun cycleGptSpeed(id: String, providerId: String, modelId: String, expected: SubAgentProfile? = null):
+        ConversationSubAgentPreferences.WriteResult {
+        if (!enabled) return ConversationSubAgentPreferences.WriteResult.Rejected
+        return try {
+            // Capture before suspension, even when the caller has no expected UI snapshot.
+            val captured = repository.snapshot(owner).profiles.singleOrNull { it.id == id } ?: throw LostOwner()
+            if (captured.providerId != providerId || captured.modelId != modelId ||
+                (expected != null && captured != expected)) throw LostOwner()
+            // Room lookup is suspendable and must never run inside the owner transaction/lock.
+            val resolvedProvider = providerLookup(providerId)
+            currentCoroutineContext().ensureActive()
+            val provider = resolvedProvider?.takeIf { it.id == providerId } ?: throw LostOwner()
+            val model = provider.models.singleOrNull { it.id == modelId } ?: throw LostOwner()
+            if (!enabled || !supportsGptSpeedBinding(provider, model)) throw LostOwner()
+            updateProfile(id) { old ->
+                // updateProfile also rechecks canEdit/state under the owner transaction.
+                if (old != (expected ?: captured) || old.providerId != providerId || old.modelId != modelId ||
+                    !supportsGptSpeedBinding(provider, model)) throw LostOwner()
+                old.copy(gptSpeedByModel = old.gptSpeedByModel +
+                    (SubAgentProfile.modelReasoningKey(providerId, modelId) to old.gptSpeedForModel().next()))
+            }
+        } catch (_: LostOwner) { ConversationSubAgentPreferences.WriteResult.Rejected }
+          catch (failure: Exception) { fail(failure); ConversationSubAgentPreferences.WriteResult.Rejected }
+    }
+
     fun saveModel(id: String, selection: ModelFeatureSelection, expected: SubAgentProfile? = null) = updateProfile(id) { old ->
         if (expected != null && (old.role != expected.role || old.providerId != expected.providerId || old.modelId != expected.modelId))
             throw LostOwner()

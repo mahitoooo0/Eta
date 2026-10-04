@@ -28,7 +28,7 @@ internal object AgentCompressionPolicy {
             enabled = AgentContextCompactor.autoCompressEnabled(preference ?: child, config.contextWindow),
             contextWindow = configuredWindow ?: AgentLoop.CompactPolicy.Disabled.contextWindow,
             keepRecentMessages = 0,
-            compressModelConfig = effectiveSummary,
+            compressModelConfig = effectiveSummary.copy(errorReconnectPolicy = config.errorReconnectPolicy),
         )
     }
 
@@ -49,7 +49,8 @@ internal object AgentCompressionPolicy {
             }
             runCatching {
                 RuntimeConfigRepository.configForProviderAndModel(providerId, modelId, assistant)
-            }.getOrNull()?.copy(assistantId = fallback.assistantId, systemPrompt = fallback.systemPrompt)
+            }.getOrNull()?.copy(assistantId = fallback.assistantId, systemPrompt = fallback.systemPrompt,
+                errorReconnectPolicy = fallback.errorReconnectPolicy)
                 ?: fallback
         }
         val compressed = AgentRuntimePolicy.forCompression(resolved)

@@ -33,6 +33,8 @@ internal fun SubAgentSettingRow(
     badge: String? = null,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    /** Optional control rendered between the value and the trailing arrow; null keeps legacy rows unchanged. */
+    trailing: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -58,6 +60,7 @@ internal fun SubAgentSettingRow(
             Text(value, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, maxLines = 3,
                 overflow = TextOverflow.Ellipsis, color = colors.onSurface.copy(alpha = alpha))
         }
+        trailing?.invoke()
         Icon(if (dropdown) Icons.Rounded.ExpandMore else Icons.AutoMirrored.Rounded.KeyboardArrowRight,
             null, Modifier.size(18.dp), tint = colors.onSurface.copy(alpha = alpha))
     }

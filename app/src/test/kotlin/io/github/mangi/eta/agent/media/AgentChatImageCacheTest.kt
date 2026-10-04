@@ -20,6 +20,53 @@ import org.robolectric.annotation.Config
 @Config(application = Application::class)
 class AgentChatImageCacheTest {
     @Test
+    fun branchPathRelocationHasOwnershipAndTraversalBoundaries() {
+        val context = RuntimeEnvironment.getApplication()
+        val cache = AgentChatImageCache(context)
+        val source = cache.stage("branch-source", byteArrayOf(1), "image.png")!!.absolutePath
+        val sourceDir = File(source).parentFile!!
+        val target = File(File(sourceDir.parentFile, "branch-target"), File(source).name).absolutePath
+        assertEquals(target, cache.rewriteCachedPath(source, "branch-source", "branch-target"))
+        assertEquals("file://$target", cache.rewriteCachedPath("file://$source", "branch-source", "branch-target"))
+        val untouched = listOf(
+            sourceDir.absolutePath + "-sibling/image.png",
+            sourceDir.absolutePath + "/../other/image.png",
+            sourceDir.absolutePath + "/nested/../../other/image.png",
+            sourceDir.absolutePath + "/./image.png",
+            "literal $source",
+            "https://example.org$source",
+            "/workspace/${AgentChatImageCache.CACHE_DIRECTORY}/branch-source/image.png",
+            "/data/data/another.package/cache/${AgentChatImageCache.CACHE_DIRECTORY}/branch-source/image.png",
+        )
+        untouched.forEach { assertEquals(it, cache.rewriteCachedPath(it, "branch-source", "branch-target")) }
+        val outside = File(context.cacheDir, "outside-branch").apply { mkdirs() }
+        val link = File(sourceDir, "linked")
+        java.nio.file.Files.createSymbolicLink(link.toPath(), outside.toPath())
+        val escape = File(link, "image.png").absolutePath
+        assertEquals(escape, cache.rewriteCachedPath(escape, "branch-source", "branch-target"))
+        java.nio.file.Files.delete(link.toPath())
+        cache.deleteConversation("branch-source")
+        outside.delete()
+    }
+
+    @Test
+    fun branchPathRelocationAcceptsOnlyOwnAppDataRootAlias() {
+        val app = RuntimeEnvironment.getApplication()
+        val context = object : android.content.ContextWrapper(app) {
+            override fun getApplicationContext(): android.content.Context = this
+            override fun getCacheDir(): File = File("/data/user/0/${app.packageName}/cache")
+        }
+        val cache = AgentChatImageCache(context)
+        val suffix = "/${app.packageName}/cache/${AgentChatImageCache.CACHE_DIRECTORY}"
+        val alias = "/data/data$suffix/source/image.png"
+        assertEquals("/data/user/0$suffix/target/image.png", cache.rewriteCachedPath(alias, "source", "target"))
+        for (path in listOf("/workspace$suffix/source/image.png", "/data/user/10$suffix/source/image.png",
+            "$alias/../../other", "/data/data$suffix/source-sibling/image.png")) {
+            assertEquals(path, cache.rewriteCachedPath(path, "source", "target"))
+        }
+    }
+
+    @Test
     fun stagesBytesAndRemovesConversationAndOrphans() {
         val context = RuntimeEnvironment.getApplication()
         val cache = AgentChatImageCache(context)

@@ -36,7 +36,7 @@ internal data class ConversationSubAgentConfig(
     val legacyParallelLimits: Map<String, Int> = emptyMap(),
 ) {
     fun detached(): ConversationSubAgentConfig = copy(
-        profiles = profiles.map { it.copy(reasoningByModel = it.reasoningByModel.toMap()) }.toList(),
+        profiles = profiles.map { it.copy(reasoningByModel = it.reasoningByModel.toMap(), gptSpeedByModel = it.gptSpeedByModel.toMap()) }.toList(),
         parallelLimits = parallelLimits.toMap(), legacyParallelLimits = legacyParallelLimits.toMap())
     fun parallelLimit(model: SubAgentParallelModel): Int =
         parallelLimits[model] ?: legacyParallelLimits[model.legacyKey()] ?: 1
@@ -51,6 +51,10 @@ internal data class ConversationSubAgentConfig(
                 val parts = key.split('\u0000')
                 parts.size == 2 && parts.all { it.isNotBlank() }
             }) { "Invalid reasoning-memory model key" }
+            require(profile.gptSpeedByModel.keys.all { key ->
+                val parts = key.split('\u0000')
+                parts.size == 2 && parts.all { it.isNotBlank() }
+            }) { "Invalid GPT-speed-memory model key" }
         }
         require(parallelLimits.values.all { it >= 0 })
         require(legacyParallelLimits.all { (key, limit) -> key.matches(Regex("agent_model_parallel_[0-9a-f]{64}")) && limit >= 0 })
@@ -344,6 +348,19 @@ internal class ConversationSubAgentPreferences(
             require(provider.isNotBlank() && model.isNotBlank() && '\u0000' !in provider && '\u0000' !in model)
             require(pairs.add(provider to model))
             require(ReasoningEffort.fromWireValue(string(item, "reasoning")) != null)
+        }
+        // Absent in older archives. Present malformed fields must not silently lose user settings.
+        if (j.has("gpt_speed_memory")) {
+            val speeds = array(j, "gpt_speed_memory")
+            val speedPairs = mutableSetOf<Pair<String, String>>()
+            for (i in 0 until speeds.length()) {
+                val item = speeds.getJSONObject(i)
+                val provider = string(item, "provider"); val model = string(item, "model")
+                require(provider.isNotBlank() && model.isNotBlank() && '\u0000' !in provider && '\u0000' !in model)
+                require(speedPairs.add(provider to model))
+                val speed = string(item, "speed")
+                require(io.github.mangi.eta.data.model.GptSpeedMode.entries.any { it.name == speed })
+            }
         }
         return SubAgentProfile.fromJson(j)
     }

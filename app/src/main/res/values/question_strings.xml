@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="question_heading">Question for you</string>
+    <string name="question_other">Other…</string>
+    <string name="question_other_hint">Describe your choice</string>
+    <string name="question_delegate">You decide</string>
+    <string name="question_delegate_hint">Only delegates this decision; does not expand permissions</string>
+    <string name="question_note">Additional notes (optional)</string>
+    <string name="question_submit">Submit answer</string>
+    <string name="question_submitting">Submitting…</string>
+    <string name="question_answered">Answered</string>
+    <string name="question_cancelled">Question cancelled</string>
+    <string name="question_interrupted">Question interrupted</string>
+    <string name="question_waiting">Waiting for your answer</string>
+    <string name="question_recommended">Recommended</string>
+</resources>

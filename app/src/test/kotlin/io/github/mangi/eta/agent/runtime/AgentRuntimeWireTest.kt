@@ -120,6 +120,26 @@ class AgentRuntimeWireTest {
         assertEquals("run-session", AgentRuntimeWire.runRequestFromBundle(bundle).effectiveModelSessionId)
     }
 
+    @Test fun reconnectPolicyAndEventsSurviveWireAndDurableReplay() {
+        val config = AgentModelClient.ModelConfig(baseUrl = "https://example.invalid", apiKey = "test",
+            model = "test", systemPrompt = "", errorReconnectPolicy = "continuous")
+        val request = AgentRuntimeWire.RunRequest(runId = "reconnect", prompt = "test", config = config, images = emptyList())
+        val bundle = AgentRuntimeWire.toLegacyBundle(request, emptyHistoryDescriptor())
+        bundle.remove(AgentRuntimeWire.KEY_HISTORY_FD)
+        bundle.putParcelableArrayList(AgentRuntimeWire.KEY_HISTORY, java.util.ArrayList())
+        assertEquals("continuous", AgentRuntimeWire.runRequestFromBundle(bundle).config.errorReconnectPolicy)
+        bundle.remove("error_reconnect_policy")
+        assertEquals("none", AgentRuntimeWire.runRequestFromBundle(bundle).config.errorReconnectPolicy)
+        assertEquals(config, AgentRuntimeWire.compactModelConfigFromBundle(
+            AgentRuntimeWire.compactBundle("reconnect", compressModelConfig = config)))
+        for (status in listOf("running", "succeeded", "failed", "stopped")) {
+            val event = AgentEvent.ErrorReconnectChanged(7, "same-disconnect", status, 5_000_000_000L, "HTTP_401", "safe detail")
+            assertEquals(event, AgentRuntimeWire.eventFromBundle(AgentRuntimeWire.eventToBundle(event)))
+            assertEquals(event, AgentEventJsonCodec.decode(AgentEventJsonCodec.encode(event)))
+            assertEquals(event, event.recoveryProjection())
+        }
+    }
+
     @Test
     fun retryEventSurvivesIpcAndArchiveJson() {
         val event = AgentEvent.ModelRetryScheduled(7, 2, 3, 4_000, "HTTP_429", "服务端：Model busy；Retry-After：45")

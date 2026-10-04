@@ -18,6 +18,14 @@ class AgentTimelineRowsTest {
         resultSummary = "complete result $i",
     )
 
+    /** Distinct id space so separate groups never share a row key. */
+    private fun namedTool(id: String, running: Boolean = false) = ToolActivityMessageUi(
+        id = id, toolName = "terminal",
+        status = if (running) ToolActivityStatusUi.Running else ToolActivityStatusUi.Success,
+        argumentsSummary = "command-$id", command = "complete command $id",
+        resultSummary = "complete result $id",
+    )
+
     @Test fun expandedGroupsProduceIndependentLazyStepsWithoutLosingContent() {
         val tools = List(1_000) { tool(it) }
         val groups = tools.toTimelineEntries()
@@ -137,5 +145,116 @@ class AgentTimelineRowsTest {
         assertTrue(hasPendingAssistantReveal(messages) { retained.containsKey(it.id) && retained[it.id] != it.content })
         val absent = emptyMap<String, String?>()
         assertFalse(hasPendingAssistantReveal(messages) { absent.containsKey(it.id) && absent[it.id] != it.content })
+    }
+
+    @Test
+    fun recollapsingUpperGroupKeepsExplicitLowerStepGroupExpandedWithStableKeys() {
+        // Upper group is deliberately large (32 steps, at the batch limit); lower group has 4 steps.
+        val upper = List(32) { namedTool("upper-$it") }
+        val lower = List(4) { namedTool("lower-$it") }
+        val entries = (upper + AgentMessageUi("sep", "between groups") + lower).toTimelineEntries()
+        assertEquals(3, entries.size)
+        val upperKey = "work-upper-0"
+        val lowerKey = "work-lower-0"
+        assertEquals(upperKey, entries[0].key)
+        assertEquals("sep", entries[1].key)
+        assertEquals(lowerKey, entries[2].key)
+
+        // Lower group opened by hand, upper group collapsed by hand.
+        val userState = mapOf(upperKey to false, lowerKey to true)
+
+        val before = entries.toLazyTimelineRows(userState, false)
+        assertEquals(
+            listOf(upperKey, "sep", lowerKey) + List(4) { "work-step:lower-$it" },
+            before.map { it.key },
+        )
+        val beforeHeaders = before.filterIsInstance<AgentTimelineRow.WorkHeader>()
+        assertEquals(listOf(upperKey, lowerKey), beforeHeaders.map { it.key })
+        assertFalse(beforeHeaders[0].expanded)
+        assertTrue(beforeHeaders[1].expanded)
+        val beforeLowerSteps = before.filterIsInstance<AgentTimelineRow.WorkStep>()
+        assertEquals(4, beforeLowerSteps.size)
+        assertTrue(beforeLowerSteps.all { it.groupKey == lowerKey })
+        assertEquals(lower.map { it.id }, beforeLowerSteps.map { (it.message as ToolActivityMessageUi).id })
+        assertEquals(listOf("work-step:lower-0", "work-step:lower-1", "work-step:lower-2", "work-step:lower-3"), beforeLowerSteps.map { it.key })
+        assertEquals(listOf(true, false, false, true), beforeLowerSteps.map { it.isFirst || it.isLast })
+        assertTrue(beforeLowerSteps.first().isFirst)
+        assertTrue(beforeLowerSteps.last().isLast)
+
+        // Expand the upper group; the lower group must not change.
+        val expanded = entries.toLazyTimelineRows(mapOf(upperKey to true, lowerKey to true), false)
+        val expandedUpperSteps = expanded.filterIsInstance<AgentTimelineRow.WorkStep>().filter { it.groupKey == upperKey }
+        assertEquals(32, expandedUpperSteps.size)
+        assertEquals(List(32) { "work-step:upper-$it" }, expandedUpperSteps.map { it.key })
+        assertEquals(
+            beforeLowerSteps,
+            expanded.filterIsInstance<AgentTimelineRow.WorkStep>().filter { it.groupKey == lowerKey },
+        )
+
+        // Collapse the upper group again; the explicitly-expanded lower group survives untouched.
+        val after = entries.toLazyTimelineRows(userState, false)
+        assertEquals(before.map { it.key }, after.map { it.key })
+        val afterHeaders = after.filterIsInstance<AgentTimelineRow.WorkHeader>()
+        assertEquals(listOf(upperKey, lowerKey), afterHeaders.map { it.key })
+        assertFalse(afterHeaders[0].expanded)
+        assertTrue(afterHeaders[1].expanded)
+        assertEquals(beforeHeaders[1], afterHeaders[1])
+        val afterLowerSteps = after.filterIsInstance<AgentTimelineRow.WorkStep>()
+        assertEquals(4, afterLowerSteps.size)
+        assertEquals(beforeLowerSteps, afterLowerSteps)
+        assertTrue(afterLowerSteps.all { it.groupKey == lowerKey })
+        assertTrue(after.filterIsInstance<AgentTimelineRow.WorkStep>().none { it.groupKey == upperKey })
+    }
+
+    @Test
+    fun streamingAutoExpansionAndBatchBoundaryStayDistinctFromUserOverrides() {
+        // 33 consecutive work messages cross the 32-message batch boundary into two groups.
+        val entries = List(33) { tool(it) }.toTimelineEntries()
+        assertEquals(2, entries.size)
+        val leadingKey = "work-tool-0"
+        val trailingKey = "work-tool-32"
+        assertEquals(listOf(leadingKey, trailingKey), entries.map { it.key })
+        assertEquals(32, (entries[0] as AgentTimelineEntry.WorkProcess).messages.size)
+        assertEquals(1, (entries[1] as AgentTimelineEntry.WorkProcess).messages.size)
+
+        // Streaming only auto-expands the trailing batch; the earlier batch stays collapsed by default.
+        val streaming = entries.toLazyTimelineRows(emptyMap(), true)
+        assertEquals(3, streaming.size)
+        val leadingHeader = streaming[0] as AgentTimelineRow.WorkHeader
+        assertEquals(leadingKey, leadingHeader.key)
+        assertFalse(leadingHeader.expanded)
+        val trailingHeader = streaming[1] as AgentTimelineRow.WorkHeader
+        assertEquals(trailingKey, trailingHeader.key)
+        assertTrue(trailingHeader.expanded)
+        val streamingStep = streaming.filterIsInstance<AgentTimelineRow.WorkStep>().single()
+        assertEquals("work-step:tool-32", streamingStep.key)
+        assertEquals(trailingKey, streamingStep.groupKey)
+        assertTrue(streamingStep.isFirst && streamingStep.isLast)
+
+        // A user override collapses the streaming trailing batch; the leading batch key stays put.
+        val collapsedTrailing = entries.toLazyTimelineRows(mapOf(trailingKey to false), true)
+        assertEquals(listOf(leadingKey, trailingKey), collapsedTrailing.map { it.key })
+        assertTrue(collapsedTrailing.all { it is AgentTimelineRow.WorkHeader })
+        assertTrue(collapsedTrailing.filterIsInstance<AgentTimelineRow.WorkHeader>().none { it.expanded })
+
+        // A user override expands the leading batch when idle; the trailing batch keeps its default collapse.
+        val expandedLeading = entries.toLazyTimelineRows(mapOf(leadingKey to true), false)
+        val leadingSteps = expandedLeading.filterIsInstance<AgentTimelineRow.WorkStep>()
+        assertEquals(32, leadingSteps.size)
+        assertTrue(leadingSteps.all { it.groupKey == leadingKey })
+        assertEquals("work-step:tool-0", leadingSteps.first().key)
+        assertTrue(leadingSteps.first().isFirst)
+        assertTrue(leadingSteps.last().isLast)
+        assertTrue(leadingSteps.drop(1).none { it.isFirst })
+        assertTrue(leadingSteps.dropLast(1).none { it.isLast })
+        assertEquals(
+            listOf(true, false),
+            expandedLeading.filterIsInstance<AgentTimelineRow.WorkHeader>().map { it.expanded },
+        )
+
+        // No override and no streaming leaves both batch groups collapsed.
+        val idle = entries.toLazyTimelineRows(emptyMap(), false)
+        assertTrue(idle.all { it is AgentTimelineRow.WorkHeader })
+        assertEquals(listOf(leadingKey, trailingKey), idle.map { it.key })
     }
 }

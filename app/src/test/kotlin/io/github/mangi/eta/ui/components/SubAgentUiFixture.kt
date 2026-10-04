@@ -8,6 +8,7 @@ import io.github.mangi.eta.agent.delegation.ConversationSubAgentConfig
 import io.github.mangi.eta.agent.delegation.ConversationSubAgentPreferences
 import io.github.mangi.eta.agent.delegation.SubAgentConfigKey
 import io.github.mangi.eta.agent.delegation.SubAgentProfile
+import io.github.mangi.eta.data.model.ProviderSetting
 import org.robolectric.RuntimeEnvironment
 import java.util.UUID
 
@@ -20,6 +21,8 @@ internal class SubAgentUiFixture(
     ),
     enabled: Boolean = true,
     canEdit: () -> Boolean = { true },
+    providers: List<ProviderSetting>? = null,
+    providerLookup: (suspend (String) -> ProviderSetting?)? = null,
 ) {
     val repository = ConversationSubAgentPreferences(
         RuntimeEnvironment.getApplication().getSharedPreferences("sub-agent-ui-${UUID.randomUUID()}", Context.MODE_PRIVATE))
@@ -28,7 +31,14 @@ internal class SubAgentUiFixture(
         check(repository.update(owner) { ConversationSubAgentConfig(profiles = profiles, enabled = enabled) }
             is ConversationSubAgentPreferences.WriteResult.Saved)
     }
-    val editor = ConversationSubAgentEditor(owner, repository, canEdit)
+    val editor = if (providers == null && providerLookup == null) {
+        ConversationSubAgentEditor(owner, repository, canEdit)
+    } else {
+        ConversationSubAgentEditor(owner, repository, { id ->
+            if (providerLookup != null) providerLookup(id)
+            else providers?.singleOrNull { it.id == id }
+        }, canEdit)
+    }
     fun snapshot(): ConversationSubAgentConfig = repository.snapshot(owner)
 }
 

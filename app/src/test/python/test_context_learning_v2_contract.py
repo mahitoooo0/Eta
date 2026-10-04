@@ -124,7 +124,9 @@ class ContextLearningV2Contract(unittest.TestCase):
         self.assertIn('if (route != contextRouteSignature(state)) return', live)
         updates = app.split('private fun updateSelectionProviders(', 1)[1].split('private fun ', 1)[0]
         self.assertIn('invalidatedUsageRuns.add(runId)', updates)
-        self.assertIn('updateConversation(id, state, updateTimestamp = false)', updates)
+        self.assertIn('val next = state.withCurrentGptSpeedBinding()', updates)
+        self.assertIn('state.cloudRouteSignature != contextRouteSignature(state)', updates)
+        self.assertIn('updateConversation(id, next, updateTimestamp = false)', updates)
         observer = app.split('private fun observeRuntimeSelection(', 1)[1].split('private fun ', 1)[0]
         self.assertIn('updateSelectionProviders(providers)', observer)
         diagnostic_actual = app.split('val uiActual = billedPromptTokens(contextState)', 1)[1].split('val uiTokens', 1)[0]

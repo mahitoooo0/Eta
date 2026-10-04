@@ -2,6 +2,8 @@ package io.github.mangi.eta.ui.components
 
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
+import io.github.mangi.eta.ui.model.ErrorReconnectMessageUi
+import io.github.mangi.eta.ui.model.isRetryableFailure
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
@@ -25,7 +27,7 @@ internal fun List<AgentTimelineRow>.turnFooters(
 ): Map<String, AgentChatMessageUi> = buildMap {
     var actionMessage: AgentChatMessageUi? = null
     var afterRowKey: String? = null
-    var terminal: SystemNoticeMessageUi? = null
+    var terminal: AgentChatMessageUi? = null
 
     fun flush(includeOpenTurn: Boolean) {
         val owner = actionMessage
@@ -56,6 +58,13 @@ internal fun List<AgentTimelineRow>.turnFooters(
                     if (message.content.isNotBlank()) {
                         if (terminal != null) flush(includeOpenTurn = true)
                         actionMessage = message
+                    }
+                    afterRowKey = row.key
+                }
+                is ErrorReconnectMessageUi -> {
+                    if (message.isRetryableFailure()) {
+                        if (actionMessage == null) actionMessage = message
+                        terminal = message
                     }
                     afterRowKey = row.key
                 }
@@ -94,12 +103,13 @@ internal fun List<AgentTimelineRow>.turnFooters(
  * footer until the next answer/user boundary. Stable runtime IDs let us close
  * a prior footer before a new run's first work row without guessing adjacency.
  */
-private fun AgentChatMessageUi.hasDifferentKnownOwner(notice: SystemNoticeMessageUi): Boolean {
+private fun AgentChatMessageUi.hasDifferentKnownOwner(notice: AgentChatMessageUi): Boolean {
     val owner = when (this) {
         is ThinkingMessageUi -> FOOTER_THINKING_ID.matchEntire(id)?.groupValues?.get(1)
         is ToolActivityMessageUi -> FOOTER_TOOL_ID.matchEntire(id)?.groupValues?.get(1)
         else -> null
     } ?: return false
+    if (notice is ErrorReconnectMessageUi) return notice.runId.isNotBlank() && notice.runId != owner
     val knownNotice = notice.id.startsWith("assistant-") ||
         notice.id.startsWith("interrupted-") || notice.id.startsWith("virtual-completed-")
     if (!knownNotice) return false

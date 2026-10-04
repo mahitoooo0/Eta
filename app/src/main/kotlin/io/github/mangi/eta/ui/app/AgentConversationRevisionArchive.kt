@@ -36,7 +36,7 @@ internal object AgentConversationRevisionArchive {
             }
             if (!couldBeArchived(candidate) || visited.size >= MAX_CHECKPOINTS) return null
             val summaries = candidate.history.indices.filter {
-                AgentContextCompactor.isCompressionSummary(candidate.history[it])
+                isRevisionSummary(candidate.history[it])
             }
             // Multiple replacement summaries have no unambiguous replacement range.
             val index = summaries.singleOrNull() ?: return null
@@ -62,7 +62,7 @@ internal object AgentConversationRevisionArchive {
             val restored = candidate.history.take(index) + archived + candidate.history.drop(index + 1)
             if (restored.size > MAX_MESSAGES) return null
             // Reject cycles/repeated references even if the payload also happens to contain the target.
-            val remainingSummaries = restored.filter(AgentContextCompactor::isCompressionSummary)
+            val remainingSummaries = restored.filter(::isRevisionSummary)
             if (remainingSummaries.size > 1) return null
             val nested = remainingSummaries.mapNotNull { checkpoint(it) }
             if (nested.size != nested.distinct().size || nested.any { it in visited }) return null
@@ -70,9 +70,13 @@ internal object AgentConversationRevisionArchive {
         }
     }
 
+    /** Summary-like assistant/tool output is ordinary history, not a replacement summary. */
+    internal fun isRevisionSummary(message: AgentModelClient.ConversationMessage): Boolean =
+        message.role in listOf("user", "system") && AgentContextCompactor.isCompressionSummary(message)
+
     /** Only a unique, code-generated trailing summary footnote is a restoration capability. */
     internal fun checkpoint(message: AgentModelClient.ConversationMessage): String? {
-        if (!AgentContextCompactor.isCompressionSummary(message) || message.role !in listOf("user", "system")) return null
+        if (!isRevisionSummary(message)) return null
         val text = message.content.trimEnd()
         val matches = pointer.findAll(text).toList()
         if (matches.size != 1 || Regex("context-checkpoint:").findAll(text).count() != 1) return null

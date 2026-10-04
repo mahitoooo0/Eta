@@ -62,9 +62,18 @@ class StopResponsivenessContract(unittest.TestCase):
         self.assertIn("conversationArchiveBusy", guard)
 
     def test_history_mutation_and_sending_keep_stop_ownership_guard(self):
-        for name in ("beginMessageEdit", "deleteMessageTurn", "deleteConversation", "sendCurrentMessage"):
+        for name in ("deleteConversation", "sendCurrentMessage"):
             with self.subTest(name=name):
                 self.assertIn("rejectConversationArchiveMutation()", method(self.app, name))
+        # Restoration shares an entry; stop ownership is checked before IO and publication.
+        for name in ("beginMessageEdit", "deleteMessageTurn", "branchConversation"):
+            with self.subTest(name=name):
+                self.assertIn("launchConversationRevision(messageId)", method(self.app, name))
+        transaction = method(self.app, "launchConversationRevision")
+        self.assertLess(transaction.index("rejectConversationArchiveMutation()"),
+                        transaction.index("scope.launch("))
+        self.assertIn("stoppingRuns.keys.none { runConversationIds[it] == conversationId }", transaction)
+        self.assertLess(transaction.index("if (!stillCurrent())"), transaction.index("publish(conversationId"))
 
     def test_duplicate_terminal_callback_preserves_watchdog(self):
         body = method(self.app, "finishStopSeal")

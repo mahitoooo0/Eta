@@ -1,6 +1,7 @@
 package io.github.mangi.eta.agent.delegation
 
 import io.github.mangi.eta.agent.model.ModelFeatureSelection
+import io.github.mangi.eta.data.model.GptSpeedMode
 import io.github.mangi.eta.data.model.ReasoningEffort
 import org.json.JSONObject
 
@@ -15,6 +16,7 @@ internal data class SubAgentProfile(
     val reasoning: ReasoningEffort? = null,
     val imageResolution: String? = null,
     val reasoningByModel: Map<String, ReasoningEffort> = emptyMap(),
+    val gptSpeedByModel: Map<String, GptSpeedMode> = emptyMap(),
 ) {
     init {
         require(id.isNotBlank() && name.isNotBlank() && name.length <= 80)
@@ -31,6 +33,9 @@ internal data class SubAgentProfile(
     fun withRole(next: String): SubAgentProfile = (if (role == next ||
         (!isMedia && next in setOf("implementation", "review"))) copy(role = next)
         else copy(role = next, providerId = "", modelId = "", reasoning = null, imageResolution = null)).normalizedTaskTier()
+    fun gptSpeedForModel(providerId: String = this.providerId, modelId: String = this.modelId): GptSpeedMode =
+        gptSpeedByModel[modelReasoningKey(providerId, modelId)] ?: GptSpeedMode.NORMAL
+
     val selection get() = ModelFeatureSelection(true, providerId, modelId)
     val roleLabel get() = when (role) {
         "implementation" -> "执行"
@@ -49,15 +54,37 @@ internal data class SubAgentProfile(
                     .put("provider", parts[0]).put("model", parts[1]).put("reasoning", effort.wireValue))
             }
         })
+        .put("gpt_speed_memory", org.json.JSONArray().also { array ->
+            gptSpeedByModel.forEach { (key, speed) ->
+                val parts = key.split('\u0000')
+                if (parts.size == 2 && parts.all { it.isNotBlank() }) array.put(JSONObject()
+                    .put("provider", parts[0]).put("model", parts[1]).put("speed", speed.name))
+            }
+        })
 
     companion object {
         fun fromJson(j: JSONObject) = SubAgentProfile(j.getString("id"), j.getString("name"),
             j.getString("role"), j.optBoolean("enabled", true), j.optString("provider"), j.optString("model"),
             SubAgentTaskTier.fromWireValue(j.optString("tier")), ReasoningEffort.fromWireValue(j.optString("reasoning")),
             j.optString("image_resolution").takeIf { it in io.github.mangi.eta.agent.model.ImageResolutionTier.values },
-            reasoningMemory(j)).normalizedTaskTier()
+            reasoningMemory(j), gptSpeedMemory(j)).normalizedTaskTier()
 
         fun modelReasoningKey(providerId: String, modelId: String): String = providerId + "\u0000" + modelId
+
+        // Legacy/global records are tolerant; conversation archives validate before reaching this reader.
+        private fun gptSpeedMemory(j: JSONObject): Map<String, GptSpeedMode> {
+            val array = j.optJSONArray("gpt_speed_memory") ?: return emptyMap()
+            return buildMap {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val provider = item.opt("provider") as? String ?: continue
+                    val model = item.opt("model") as? String ?: continue
+                    val speed = GptSpeedMode.entries.firstOrNull { it.name == item.opt("speed") } ?: continue
+                    if (provider.isNotBlank() && model.isNotBlank() && '\u0000' !in provider && '\u0000' !in model)
+                        put(modelReasoningKey(provider, model), speed)
+                }
+            }
+        }
 
         private fun reasoningMemory(j: JSONObject): Map<String, ReasoningEffort> {
             val array = j.optJSONArray("reasoning_memory") ?: return emptyMap()

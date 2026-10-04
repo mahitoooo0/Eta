@@ -1,5 +1,6 @@
 package io.github.mangi.eta.agent.model
 
+import io.github.mangi.eta.agent.question.AgentQuestionCoordinator
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentRunController
 import io.github.mangi.eta.agent.runtime.AgentRuntimePolicy
@@ -69,7 +70,10 @@ internal class AgentLoop(
         val result: AgentModelClient.ToolResult,
     )
 
-    private val auxiliaryVision = AuxiliaryVision.create(config, runController, sessionId)
+    private var auxiliaryRound = 1
+    private val auxiliaryVision = AuxiliaryVision.create(config, runController, sessionId) {
+        onEvent(it.copy(round = auxiliaryRound))
+    }
 
     private var toolCallValidator = AgentToolCallValidator(tools)
     private val delegationArgumentRepair = AgentDelegationArgumentRepair()
@@ -155,6 +159,7 @@ internal class AgentLoop(
             appendPendingSteeringMessage()
             currentRoundTools = delegationArgumentRepair.availableTools(toolsForRound?.invoke() ?: tools)
             try {
+                auxiliaryRound = round
                 auxiliaryVision.prepare(messages)
             } catch (failure: Exception) {
                 runController.throwIfCancelled()
@@ -181,6 +186,7 @@ internal class AgentLoop(
                 appendPendingSteeringMessage()
                 currentRoundTools = delegationArgumentRepair.availableTools(toolsForRound?.invoke() ?: tools)
                 try {
+                    auxiliaryRound = round
                     auxiliaryVision.prepare(messages)
                 } catch (failure: Exception) {
                     runController.throwIfCancelled()
@@ -423,7 +429,20 @@ internal class AgentLoop(
                 } else {
                 val outcomes = mutableListOf<ToolOutcome>()
                 try {
-                    when (providerResponse.stopReason) {
+                    val askUserCalls = toolCalls.count { it.name == AgentQuestionCoordinator.TOOL_NAME }
+                    val askUserBatchBlocked = askUserCalls > 1 ||
+                        (askUserCalls == 1 && toolCalls.any { it.name != AgentQuestionCoordinator.TOOL_NAME })
+                    if (askUserBatchBlocked) {
+                        // ask_user 只能单独出现。混合批次或多个 ask_user 全部配对拒绝，零执行。
+                        toolCalls.forEach { call ->
+                            outcomes += rejectedToolOutcome(
+                                round = round,
+                                toolCall = call,
+                                code = "ASK_USER_BATCH_BARRIER",
+                                message = "ask_user 必须是本批唯一的工具调用。本批未执行任何工具，请只保留一个 ask_user 后重试。",
+                            )
+                        }
+                    } else when (providerResponse.stopReason) {
                         AssistantStopReason.TOOL_USE ->
                             toolCalls.forEachIndexed { index, call -> outcomes += executeTool(round, call, index) }
                         AssistantStopReason.OUTPUT_LIMIT ->
@@ -910,6 +929,7 @@ internal class AgentLoop(
                     usageConversationId = sessionId,
                     sourceModelConfig = config.copy(contextWindow = window),
                     summaryTokenBudget = AgentCompressionBoundary.summaryProgressBudget(window),
+                    onErrorReconnect = { onEvent(it.copy(round = round)) },
                 ),
                 keepStartOverride = cut, controller = runController,
                 replay = if (compressConfig.providerType == config.providerType && compressConfig.baseUrl == config.baseUrl &&
@@ -1107,6 +1127,8 @@ internal class AgentLoop(
             } else toolExecutor.execute(toolCall)
         } catch (throwable: Exception) {
             runController.throwIfCancelled()
+            if (throwable is io.github.mangi.eta.agent.question.AgentQuestionInterruptedException ||
+                throwable is io.github.mangi.eta.agent.runtime.AgentRunCancelledException) throw throwable
             AgentModelClient.ToolResult(
                 content = JSONObject()
                     .put("ok", false)

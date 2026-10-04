@@ -12,6 +12,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRunControllerTest {
+    @Test fun questionNotificationSurvivesSteeringAndPrecedesBlockingCleanup() {
+        val controller = AgentRunController()
+        val wake = CountDownLatch(1)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        controller.register { entered.countDown(); release.await() }
+        controller.register(wakeBeforeCleanup = true) { wake.countDown() }
+        controller.steer("guidance is not an answer or cancellation")
+        assertEquals(1L, wake.count)
+        val stopping = thread(isDaemon = true) { controller.cancel() }
+        try {
+            assertTrue(wake.await(1, TimeUnit.SECONDS))
+            assertTrue(entered.await(1, TimeUnit.SECONDS))
+        } finally { release.countDown(); stopping.join(2_000) }
+    }
+
     @Test fun cancellationInterruptsTransportBeforePotentiallyBlockingToolCleanup() {
         val controller = AgentRunController()
         val transportStopped = CountDownLatch(1)

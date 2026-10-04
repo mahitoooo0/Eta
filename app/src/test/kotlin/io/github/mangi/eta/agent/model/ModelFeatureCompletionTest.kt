@@ -51,6 +51,23 @@ class ModelFeatureCompletionTest {
         }
     }
 
+    @Test fun reconnectPolicyDoesNotUseOldWholeFeatureDeadline() {
+        val events = mutableListOf<io.github.mangi.eta.agent.runtime.AgentEvent.ErrorReconnectChanged>()
+        var calls = 0
+        val result = ModelFeatureCompletion.complete(config.copy(errorReconnectPolicy = "window_5m"),
+            JSONArray(), AgentRunController(), "test", timeoutMs = 50,
+            onErrorReconnect = events::add, providerOverride = provider { _, controller ->
+                calls++
+                if (calls == 1) throw java.io.IOException("offline")
+                assertFalse(controller.isCancelled)
+                response("recovered")
+            })
+        assertEquals("recovered", result)
+        assertEquals(2, calls)
+        assertEquals("running", events.first().status)
+        assertEquals("succeeded", events.last().status)
+    }
+
     @Test fun totalDeadlineCancelsProviderResource() {
         val cancelled = CountDownLatch(1)
         assertThrows(IllegalStateException::class.java) {

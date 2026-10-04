@@ -3,6 +3,10 @@ package io.github.mangi.eta.agent.runtime
 import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
+import io.github.mangi.eta.agent.question.AgentQuestionAnswer
+import io.github.mangi.eta.agent.question.AgentQuestionCodec
+import io.github.mangi.eta.agent.question.AgentQuestionReceipt
+import io.github.mangi.eta.agent.question.AgentQuestionStatus
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import io.github.mangi.eta.agent.model.AgentModelClient
@@ -10,6 +14,7 @@ import io.github.mangi.eta.agent.model.AgentConversationCodec
 import io.github.mangi.eta.agent.model.AgentContextCompactor
 import io.github.mangi.eta.data.model.CustomBody
 import io.github.mangi.eta.data.model.CustomHeader
+import io.github.mangi.eta.data.model.GptSpeedMode
 import io.github.mangi.eta.data.model.ModelReasoningCapabilities
 import io.github.mangi.eta.data.model.ReasoningEffort
 import java.io.Closeable
@@ -89,6 +94,84 @@ internal object AgentRuntimeWire {
     /** Stop only the parent; independently owned child groups remain available. */
     const val MSG_STOP_MAIN_RUN = 17
 
+    /** A structured answer is separate from steering and must receive a runtime ACK. */
+    const val MSG_QUESTION_ANSWER = 18
+    const val MSG_QUESTION_ANSWER_RESPONSE = 19
+    const val MSG_QUERY_QUESTION = 20
+    const val MSG_QUERY_QUESTION_RESPONSE = 21
+
+    data class QuestionAnswerSubmission(
+        val conversationId: String,
+        val runId: String,
+        val questionId: String,
+        val toolCallId: String,
+        val answer: AgentQuestionAnswer,
+    )
+
+    fun questionAnswerBundle(conversationId: String, runId: String, questionId: String,
+        toolCallId: String, answer: AgentQuestionAnswer): Bundle = Bundle().apply {
+        require(listOf(conversationId, runId, questionId, toolCallId).all { it.isNotBlank() && it.length <= 1024 })
+        putString("conversation_id", conversationId)
+        putString(KEY_RUN_ID, runId)
+        putString("question_id", questionId)
+        putString(KEY_TOOL_CALL_ID, toolCallId)
+        val encoded = AgentQuestionCodec.answerToJson(answer).toString()
+        require(encoded.toByteArray(Charsets.UTF_8).size <= 24 * 1024)
+        putString("question_answer_json", encoded)
+    }
+
+    fun questionAnswerFromBundle(bundle: Bundle): QuestionAnswerSubmission {
+        fun id(key: String): String = bundle.getString(key).orEmpty().also {
+            require(it.isNotBlank() && it.length <= 1024) { "Invalid question ownership" }
+        }
+        val raw = bundle.getString("question_answer_json").orEmpty()
+        require(raw.toByteArray(Charsets.UTF_8).size <= 24 * 1024)
+        return QuestionAnswerSubmission(id("conversation_id"), id(KEY_RUN_ID), id("question_id"),
+            id(KEY_TOOL_CALL_ID), AgentQuestionCodec.answerFromJson(org.json.JSONObject(raw)))
+    }
+
+    fun questionReceiptBundle(questionId: String, receipt: AgentQuestionReceipt): Bundle = Bundle().apply {
+        putString("question_id", questionId)
+        putBoolean("question_accepted", receipt.accepted)
+        putString("question_code", receipt.code)
+        putString("question_message", receipt.message)
+    }
+
+    fun questionReceiptFromBundle(bundle: Bundle): AgentQuestionReceipt = AgentQuestionReceipt(
+        bundle.getBoolean("question_accepted", false),
+        bundle.getString("question_code") ?: "QUESTION_ACK_INVALID",
+        bundle.getString("question_message").orEmpty(),
+    )
+
+    fun questionQueryBundle(conversationId: String, runId: String, questionId: String, toolCallId: String): Bundle = Bundle().apply {
+        require(listOf(conversationId, runId, questionId, toolCallId).all { it.isNotBlank() && it.length <= 1024 })
+        putString("conversation_id", conversationId); putString(KEY_RUN_ID, runId)
+        putString("question_id", questionId); putString(KEY_TOOL_CALL_ID, toolCallId)
+    }
+
+    fun questionSnapshotBundle(query: Bundle, snapshot: io.github.mangi.eta.agent.question.AgentQuestionSnapshot?): Bundle = Bundle(query).apply {
+        putBoolean("question_known", snapshot != null)
+        snapshot?.let {
+            putString("question_status", it.status.name)
+            it.answer?.let { a -> putString("question_answer_json", AgentQuestionCodec.answerToJson(a).toString()) }
+        }
+    }
+
+    fun questionSnapshotFromBundle(bundle: Bundle): io.github.mangi.eta.agent.question.AgentQuestionSnapshot? {
+        if (!bundle.getBoolean("question_known", false)) return null
+        return runCatching {
+            fun id(key: String) = bundle.getString(key).orEmpty().also { require(it.isNotBlank() && it.length <= 1024) }
+            val status = AgentQuestionStatus.valueOf(bundle.getString("question_status").orEmpty())
+            val answer = bundle.getString("question_answer_json")?.let {
+                require(it.toByteArray(Charsets.UTF_8).size <= 24 * 1024)
+                AgentQuestionCodec.answerFromJson(org.json.JSONObject(it))
+            }
+            require((status == AgentQuestionStatus.Answered) == (answer != null))
+            io.github.mangi.eta.agent.question.AgentQuestionSnapshot(id("conversation_id"), id(KEY_RUN_ID),
+                id("question_id"), id(KEY_TOOL_CALL_ID), status, answer)
+        }.getOrNull()
+    }
+
     private const val MODULE_PACKAGE = "io.github.mangi.eta"
     private const val SERVICE_CLASS = "io.github.mangi.eta.agent.runtime.AgentRuntimeService"
 
@@ -122,6 +205,7 @@ internal object AgentRuntimeWire {
     private const val KEY_SUPPORTS_VISION = "supports_vision"
     private const val KEY_SUPPORTS_VIDEO = "supports_video"
     private const val KEY_REASONING_EFFORT = "reasoning_effort"
+    private const val KEY_GPT_SPEED_MODE = "gpt_speed_mode"
     private const val KEY_REASONING_CAPABILITIES_JSON = "reasoning_capabilities_json"
     private const val KEY_EXTRA_BODY_JSON = "extra_body_json"
     private const val KEY_CUSTOM_HEADERS_JSON = "custom_headers_json"
@@ -311,6 +395,7 @@ internal object AgentRuntimeWire {
         putString(KEY_API_KEY, request.config.apiKey)
         putString(KEY_MODEL, request.config.model)
         putString(KEY_MODEL_DISPLAY_NAME, request.config.modelDisplayName)
+        putString("error_reconnect_policy", request.config.errorReconnectPolicy)
         request.config.contextWindow?.let { putInt(KEY_CONTEXT_WINDOW, it) }
         putString(KEY_SYSTEM_PROMPT, request.config.systemPrompt)
         putString(KEY_ANTHROPIC_VERSION, request.config.anthropicVersion)
@@ -326,6 +411,7 @@ internal object AgentRuntimeWire {
         putBoolean(KEY_SUPPORTS_VISION, request.config.supportsVision)
         putBoolean(KEY_SUPPORTS_VIDEO, request.config.supportsVideo)
         putString(KEY_REASONING_EFFORT, request.config.effectiveReasoningEffort.wireValue)
+        request.config.gptSpeedMode?.let { putString(KEY_GPT_SPEED_MODE, it.name) }
         request.config.reasoningCapabilities?.let {
             putString(KEY_REASONING_CAPABILITIES_JSON, json.encodeToString(it))
         }
@@ -425,6 +511,7 @@ internal object AgentRuntimeWire {
                 apiKey = bundle.getString(KEY_API_KEY).orEmpty(),
                 model = bundle.getString(KEY_MODEL).orEmpty(),
                 modelDisplayName = bundle.getString(KEY_MODEL_DISPLAY_NAME).orEmpty(),
+                errorReconnectPolicy = bundle.getString("error_reconnect_policy") ?: "none",
                 contextWindow = bundle.optionalInt(KEY_CONTEXT_WINDOW),
                 systemPrompt = bundle.getString(KEY_SYSTEM_PROMPT).orEmpty(),
                 anthropicVersion = bundle.getString(KEY_ANTHROPIC_VERSION).orEmpty()
@@ -465,7 +552,10 @@ internal object AgentRuntimeWire {
                 ),
                 extraBodyJson = bundle.getString(KEY_EXTRA_BODY_JSON).orEmpty(),
                 customHeaders = decodeCustomHeaders(bundle.getString(KEY_CUSTOM_HEADERS_JSON)),
-                customBody = decodeCustomBody(bundle.getString(KEY_CUSTOM_BODY_JSON))
+                customBody = decodeCustomBody(bundle.getString(KEY_CUSTOM_BODY_JSON)),
+                gptSpeedMode = bundle.getString(KEY_GPT_SPEED_MODE)?.let { name ->
+                    GptSpeedMode.entries.firstOrNull { it.name == name }
+                },
             ),
             history = AgentRuntimeHistoryTransfer.readFromBundle(bundle),
             images = images,
@@ -687,6 +777,16 @@ internal object AgentRuntimeWire {
                 putString("reason_detail", event.reasonDetail)
             }
 
+            is AgentEvent.ErrorReconnectChanged -> {
+                putString(KEY_TYPE, "error_reconnect_changed")
+                putInt("round", event.round)
+                putString("reconnect_id", event.reconnectId)
+                putString("status", event.status)
+                putLong("elapsed_ms", event.elapsedMs)
+                putString("reason_code", event.reasonCode)
+                putString("reason_detail", event.reasonDetail)
+            }
+
             is AgentEvent.ProviderRequestStarted -> {
                 putString(KEY_TYPE, "provider_request_started")
                 putInt("round", event.round)
@@ -755,6 +855,19 @@ internal object AgentRuntimeWire {
                 putString("text", event.text)
                 putString("request_id", event.requestId)
                 putString("images_json", event.imagesJson)
+            }
+
+            is AgentEvent.QuestionRequested -> {
+                putString(KEY_TYPE, "question_requested")
+                putString("question_request_json", AgentQuestionCodec.requestToJson(event.request).toString())
+            }
+
+            is AgentEvent.QuestionResolved -> {
+                putString(KEY_TYPE, "question_resolved")
+                putString("question_id", event.questionId)
+                putString(KEY_RUN_ID, event.runId)
+                putString("question_status", event.status.name)
+                event.answer?.let { putString("question_answer_json", AgentQuestionCodec.answerToJson(it).toString()) }
             }
 
             is AgentEvent.ToolStarted -> {
@@ -862,6 +975,15 @@ internal object AgentRuntimeWire {
             reasonDetail = bundle.getString("reason_detail").orEmpty(),
         )
 
+        "error_reconnect_changed" -> AgentEvent.ErrorReconnectChanged(
+            round = bundle.getInt("round"),
+            reconnectId = bundle.getString("reconnect_id").orEmpty(),
+            status = bundle.getString("status").orEmpty(),
+            elapsedMs = bundle.getLong("elapsed_ms"),
+            reasonCode = bundle.getString("reason_code").orEmpty(),
+            reasonDetail = bundle.getString("reason_detail").orEmpty(),
+        )
+
         "provider_request_started" -> AgentEvent.ProviderRequestStarted(
             round = bundle.getInt("round"),
         )
@@ -926,6 +1048,22 @@ internal object AgentRuntimeWire {
             requestId = bundle.getString("request_id").orEmpty(),
             imagesJson = bundle.getString("images_json") ?: "[]",
         )
+
+        "question_requested" -> runCatching {
+            AgentEvent.QuestionRequested(AgentQuestionCodec.requestFromJson(
+                org.json.JSONObject(bundle.getString("question_request_json").orEmpty())))
+        }.getOrNull()
+
+        "question_resolved" -> runCatching {
+            val status = AgentQuestionStatus.valueOf(bundle.getString("question_status").orEmpty())
+            require(status != AgentQuestionStatus.Waiting)
+            val answer = bundle.getString("question_answer_json")?.let {
+                AgentQuestionCodec.answerFromJson(org.json.JSONObject(it))
+            }
+            require((status == AgentQuestionStatus.Answered) == (answer != null))
+            AgentEvent.QuestionResolved(bundle.getString("question_id").orEmpty(),
+                bundle.getString(KEY_RUN_ID).orEmpty(), status, answer)
+        }.getOrNull()
 
         "tool_started" -> AgentEvent.ToolStarted(
             round = bundle.getInt("round"),

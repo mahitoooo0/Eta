@@ -482,6 +482,55 @@ class AgentContextPendingRegressionTest {
         assertTrue(call(f.app, "unmeasuredContextSendAllowed", f.state("c"), false) as Boolean)
     }
 
+    @Test fun uiPruneOnlyKeepsReceiptAndSeedOnTheNextOrdinarySend() = fixture { f ->
+        val original = listOf(AgentModelClient.ConversationMessage("tool", "long output ".repeat(100), toolCallId = "tool-1"))
+        val pruned = listOf(original.single().copy(content = "retained head and tail"))
+        val nextUser = AgentModelClient.ConversationMessage("user", "next question")
+        f.put("c", f.pending().copy(history = original + nextUser))
+        f.bind("r", "c")
+        f.send("r", receipt(1, original.sumOf { AgentContextBudget.countMessage(it) }))
+        val before = f.state("c")
+        call(f.app, "applyCompressedHistoryToConversation", "c", original, pruned, nextUser, "", false)
+        val after = f.state("c")
+        assertEquals(pruned + nextUser, after.history.map { it.copy(turnId = "") })
+        assertEquals(before.livePromptTokens, after.livePromptTokens)
+        assertEquals(before.contextReceiptEvidence, after.contextReceiptEvidence)
+        assertEquals(before.cloudHistoryTokens, after.cloudHistoryTokens)
+        assertEquals(before.cloudRequestOverheadTokens, after.cloudRequestOverheadTokens)
+        assertEquals(before.messages, after.messages)
+        val normalHistory = AgentConversationRevisionReducer.commitVisibleAssistantIntoHistory(after.history, after.messages)
+        val requestState = call(f.app, "contextStateForRequestHistory", after, normalHistory) as AgentChatHomeUiState
+        assertEquals(after, requestState)
+        assertEquals(15000, call(f.app, "validMeasuredContextTokens", requestState))
+        assertEquals(15000, call(f.app, "budgetReceiptTokens", requestState))
+        assertFalse(call(f.app, "unmeasuredContextSendAllowed", requestState, false) as Boolean)
+        call(f.app, "applyRunResult", "r", AgentRuntimeWire.RunResult("r", false, "", "failed"), false)
+        assertEquals(15000, call(f.app, "budgetReceiptTokens", f.state("c")))
+        assertEquals(before.contextReceiptEvidence, f.state("c").contextReceiptEvidence)
+    }
+
+    @Test fun manualPruneKeepsReceiptButCommittedSummaryStartsUnknownEpoch() = fixture { f ->
+        val original = listOf(AgentModelClient.ConversationMessage("tool", "long output ".repeat(100), toolCallId = "tool-1"))
+        val pruned = listOf(original.single().copy(content = "short output"))
+        f.put("c", f.pending().copy(history = original, isStreaming = false))
+        f.bind("r", "c")
+        f.send("r", receipt(1, original.sumOf { AgentContextBudget.countMessage(it) }))
+        val before = f.state("c")
+        call(f.app, "applyManualCompressedHistory", "c", original, pruned, "", false)
+        val after = f.state("c")
+        assertEquals(15000, after.livePromptTokens)
+        assertEquals(before.contextReceiptEvidence, after.contextReceiptEvidence)
+        val next = call(f.app, "contextStateForRequestHistory", after,
+            after.history + AgentModelClient.ConversationMessage("user", "ordinary followup")) as AgentChatHomeUiState
+        assertEquals(15000, call(f.app, "budgetReceiptTokens", next))
+        assertFalse(call(f.app, "unmeasuredContextSendAllowed", next, false) as Boolean)
+        val summary = listOf(AgentModelClient.ConversationMessage("user", "[对话摘要]\nsummary"))
+        call(f.app, "applyManualCompressedHistory", "c", pruned, summary, "", true)
+        assertNull(f.state("c").livePromptTokens)
+        assertNull(f.state("c").contextBudgetReceiptTokens)
+        assertTrue(f.state("c").contextAwaitingReceipt)
+    }
+
     private fun receipt(round: Int, history: Int, input: Int = 15000, overhead: Int = 10000) =
         AgentEvent.UsageReceived(round, AgentTokenUsage(inputTokens = input),
             requestHistoryTokens = history, requestOverheadTokens = overhead)

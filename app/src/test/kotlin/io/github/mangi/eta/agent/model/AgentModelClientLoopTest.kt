@@ -788,7 +788,7 @@ class AgentModelClientLoopTest {
         }
         val messages = JSONArray().put(AgentConversationCodec.userTextMessage("开始"))
         val loop = AgentLoop(
-            config = modelConfig().copy(supportsVision = true), messages = messages,
+            config = modelConfig().copy(supportsVision = true, errorReconnectPolicy = "continuous"), messages = messages,
             tools = AgentToolCatalog.build(terminalTools = false, browserTools = false),
             provider = provider,
             toolExecutor = AgentModelClient.ToolExecutor {
@@ -812,7 +812,8 @@ class AgentModelClientLoopTest {
         assertFalse(messages.toString().contains("半截"))
         assertEquals("先观察观察成功", result.reasoningContent)
         assertEquals(listOf(1, 2, 3), events.filterIsInstance<AgentEvent.RoundStarted>().map { it.round })
-        assertEquals(2, events.filterIsInstance<AgentEvent.ModelRetryScheduled>().single().round)
+        assertEquals(2, events.filterIsInstance<AgentEvent.ErrorReconnectChanged>().first().round)
+        assertTrue(events.none { it is AgentEvent.ModelRetryScheduled })
         assertEquals(1, events.filterIsInstance<AgentEvent.ToolStarted>().size)
     }
 

@@ -43,6 +43,7 @@ internal data class AgentModelOptionUi(
     val supportsImageGeneration: Boolean = false,
     val supportsVideo: Boolean = false,
     val supportsVideoGeneration: Boolean = false,
+    val gptSpeedSupported: Boolean = false,
     val requestEndpoint: io.github.mangi.eta.agent.model.EndpointKind = io.github.mangi.eta.agent.model.EndpointKind.CHAT_COMPLETIONS,
 )
 
@@ -125,6 +126,7 @@ internal object AgentModelPickerProjector {
             displayName = model.displayName.ifBlank { model.modelId },
             contextWindow = model.effectiveContextWindow,
             preferredReasoningEffort = model.preferredReasoningEffort,
+            gptSpeedSupported = io.github.mangi.eta.data.model.supportsGptSpeedBinding(this, model),
             supportsVision = model.supportsVision,
             supportsImageGeneration = model.supportsImageGeneration,
             supportsVideo = model.supportsVideo,

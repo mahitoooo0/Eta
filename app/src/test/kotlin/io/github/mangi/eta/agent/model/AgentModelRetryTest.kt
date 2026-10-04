@@ -19,24 +19,17 @@ import javax.net.ssl.SSLHandshakeException
 
 class AgentModelRetryTest {
     @Test
-    fun retriesAreBoundedAndBackoffIsPerModelRound() {
+    fun safeRequestRetryUsesPolicyDelayAndDistinctModelRound() {
         val delays = mutableListOf<Long>()
         val retry = AgentModelRetry { _, delay -> delays += delay }
         var calls = 0
-        val failure = assertThrows(AgentModelFailure::class.java) {
-            complete(retry, provider { _, _ -> calls++; throw SocketTimeoutException("timeout") })
-        }
-        assertEquals(4, calls)
-        assertEquals(listOf(2_000L, 4_000L, 8_000L), delays)
-        assertTrue(failure.message.orEmpty().contains("已重试 3 次"))
-        delays.clear()
-        calls = 0
         val result = complete(retry, provider { _, _ ->
             if (calls++ == 0) throw IOException("connection reset")
             response()
         })
+        assertEquals(2, calls)
         assertEquals(2, result.round)
-        assertEquals(listOf(2_000L), delays)
+        assertEquals(listOf(1_000L), delays)
     }
 
     @Test
@@ -130,7 +123,7 @@ class AgentModelRetryTest {
             assertFalse(AgentModelFailure.http(status, "").retryable)
         }
         assertFalse(AgentModelFailure.http(429, """{"error":{"code":"insufficient_quota"}}""").retryable)
-        assertNull(AgentModelFailure.transport(SSLHandshakeException("certificate")))
+        assertEquals("MODEL_CONNECTION_FAILED", AgentModelFailure.transport(SSLHandshakeException("certificate"))?.code)
         assertNull(AgentModelFailure.transport(org.json.JSONException("invalid JSON")))
         assertTrue(AgentModelFailure.stream(JSONObject().put("type", "overloaded_error"), "过载").retryable)
         assertFalse(AgentModelFailure.stream(JSONObject().put("type", "authentication_error"), "认证失败").retryable)
@@ -208,7 +201,7 @@ class AgentModelRetryTest {
     ) = retry.complete(
         initialRound = 1,
         request = ProviderRequest(
-            AgentModelClient.ModelConfig(baseUrl = "https://example.invalid", apiKey = "test-key", model = "test-model", systemPrompt = ""),
+            AgentModelClient.ModelConfig(baseUrl = "https://example.invalid", apiKey = "test-key", model = "test-model", systemPrompt = "", errorReconnectPolicy = "continuous"),
             JSONArray(), JSONArray(),
         ),
         provider = provider,

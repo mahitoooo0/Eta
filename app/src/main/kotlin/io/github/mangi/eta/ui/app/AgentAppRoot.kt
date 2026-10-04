@@ -57,6 +57,7 @@ import io.github.mangi.eta.ui.AgentTaskPreferenceScreen
 import io.github.mangi.eta.ui.AgentTaskSurfacePrompt
 import io.github.mangi.eta.ui.AppearanceSettingsScreen
 import io.github.mangi.eta.ui.HapticsSettingsScreen
+import io.github.mangi.eta.ui.ErrorReconnectSettingsScreen
 import io.github.mangi.eta.ui.ContextCompressionSettingsScreen
 import io.github.mangi.eta.ui.SettingsScreen
 import io.github.mangi.eta.ui.components.AppUpdateDialog
@@ -508,6 +509,7 @@ fun AgentAppRoot(
                         draftField = agentState.currentDraftField(),
                         onAction = { action ->
                             when (action) {
+                                AgentHomeAction.CycleGptSpeedMode -> agentState.cycleGptSpeedMode()
                                 is AgentHomeAction.ReasoningEffortChanged ->
                                     agentState.updateReasoningEffort(action.effort)
                                 is AgentHomeAction.ContextTaskSelected -> agentState.selectContextTask(action.taskId, usageConversationId)
@@ -541,6 +543,8 @@ fun AgentAppRoot(
                                     }
                                 }
                                 is AgentHomeAction.BranchMessage -> agentState.branchConversation(action.id)
+                                is AgentHomeAction.QuestionDraftChanged -> agentState.updateQuestionDraft(action.conversationId, action.questionId, action.answer)
+                                is AgentHomeAction.SubmitQuestionAnswer -> agentState.submitQuestionAnswer(action.conversationId, action.questionId)
                                 AgentHomeAction.OpenTools -> pushRoute(AppRoute.Tools)
                                 AgentHomeAction.OpenSkills -> pushRoute(AppRoute.Skills)
                                 AgentHomeAction.OpenPermissions -> pushRoute(AppRoute.Permissions)
@@ -578,6 +582,7 @@ fun AgentAppRoot(
                         onAction = { action ->
                             when (action) {
                                 AgentChatAction.NavigateBack -> popRoute()
+                                AgentChatAction.CycleGptSpeedMode -> agentState.cycleGptSpeedMode()
                                 is AgentChatAction.ReasoningEffortChanged ->
                                     agentState.updateReasoningEffort(action.effort)
                                 is AgentChatAction.ContextTaskSelected -> agentState.selectContextTask(action.taskId, usageConversationId)
@@ -613,6 +618,8 @@ fun AgentAppRoot(
                                     }
                                 }
                                 is AgentChatAction.BranchMessage -> agentState.branchConversation(action.id)
+                                is AgentChatAction.QuestionDraftChanged -> agentState.updateQuestionDraft(action.conversationId, action.questionId, action.answer)
+                                is AgentChatAction.SubmitQuestionAnswer -> agentState.submitQuestionAnswer(action.conversationId, action.questionId)
                             }
                         },
                     )
@@ -848,6 +855,9 @@ fun AgentAppRoot(
             entry<AppRoute.TitleModel>(swipeDismiss = swipeDismiss) {
                 io.github.mangi.eta.ui.ModelFeatureSettingsScreen(
                     feature = io.github.mangi.eta.agent.model.ModelFeature.TITLE, onBack = ::popRoute)
+            }
+            entry<AppRoute.ErrorReconnectSettings>(swipeDismiss = swipeDismiss) {
+                ErrorReconnectSettingsScreen(onBack = ::popRoute)
             }
             entry<AppRoute.TtsSettings>(swipeDismiss = swipeDismiss) {
                 io.github.mangi.eta.ui.TtsSettingsScreen(onBack = ::popRoute)

@@ -1,6 +1,9 @@
 package io.github.mangi.eta.agent.runtime
 
 import io.github.mangi.eta.agent.model.AgentModelClient
+import io.github.mangi.eta.agent.question.AgentQuestionAnswer
+import io.github.mangi.eta.agent.question.AgentQuestionRequest
+import io.github.mangi.eta.agent.question.AgentQuestionStatus
 import io.github.mangi.eta.core.toSafeLogToken
 
 internal sealed interface AgentEvent {
@@ -46,6 +49,19 @@ internal sealed interface AgentEvent {
 
         override fun toLogLine(): String =
             "model_retry_scheduled round=$round, attempt=$attempt, delay_ms=$delayMs, code=${reasonCode.toSafeLogToken()}"
+    }
+
+    /** One request-scoped disconnect; independent of bounded tool-envelope correction. */
+    data class ErrorReconnectChanged(
+        val round: Int,
+        val reconnectId: String,
+        val status: String,
+        val elapsedMs: Long,
+        val reasonCode: String = "",
+        val reasonDetail: String = "",
+    ) : AgentEvent {
+        override fun toLogLine(): String =
+            "error_reconnect_changed round=$round, id=${reconnectId.toSafeLogToken()}, status=${status.toSafeLogToken()}, elapsed_ms=$elapsedMs, code=${reasonCode.toSafeLogToken()}"
     }
 
     data class ProviderRequestStarted(
@@ -236,6 +252,25 @@ internal sealed interface AgentEvent {
     ) : AgentEvent {
         override fun toLogLine(): String =
             "run_failed reason_chars=${reason.length}"
+    }
+
+    data class QuestionRequested(
+        val request: AgentQuestionRequest,
+    ) : AgentEvent {
+        override fun toLogLine(): String =
+            "question_requested question_id=${request.questionId.toSafeLogToken()} " +
+                "run_id=${request.runId.toSafeLogToken()}"
+    }
+
+    data class QuestionResolved(
+        val questionId: String,
+        val runId: String,
+        val status: AgentQuestionStatus,
+        val answer: AgentQuestionAnswer? = null,
+    ) : AgentEvent {
+        override fun toLogLine(): String =
+            "question_resolved question_id=${questionId.toSafeLogToken()} " +
+                "run_id=${runId.toSafeLogToken()} status=$status answered=${answer != null}"
     }
 }
 

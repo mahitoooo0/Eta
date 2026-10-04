@@ -39,12 +39,28 @@ internal object AgentPendingResultRecovery {
                 }
             ) + result.transcript,
         )
-        if (history.alreadyApplied) return Outcome(state, alreadyApplied = true)
+        if (history.alreadyApplied) {
+            val closed = AgentQuestionProjection.interruptWaiting(runId, state.messages)
+            return Outcome(state.copy(messages = closed,
+                isWaitingForAnswer = AgentQuestionProjection.hasWaiting(closed)), alreadyApplied = true)
+        }
 
         val messagesWithResult = state.messages
             .filterNot { it is SystemNoticeMessageUi && it.id == interruptedNoticeId(runId) }
             .toMutableList()
             .also { messages ->
+            if (!result.ok && result.error != "已停止") {
+                val projected = AgentRunMessageProjector(nowElapsedRealtime = { 0L })
+                    .terminalFailure(runId, result.error.orEmpty(), messages)
+                messages.clear()
+                messages.addAll(projected)
+                return@also
+            }
+            if (!result.ok) {
+                val stopped = AgentRunMessageProjector(nowElapsedRealtime = { 0L }).runStopped(runId, messages)
+                messages.clear()
+                messages.addAll(stopped)
+            }
             val assistantIndex = AgentRunMessageProjector.resultTargetIndex(runId, messages, includeNotices = true)
             val resultId = AgentRunMessageProjector.resultFallbackId(runId, messages)
             val targetRound = (messages.getOrNull(assistantIndex) as? AgentMessageUi)
@@ -56,13 +72,16 @@ internal object AgentPendingResultRecovery {
                 }
             } ?: 0
             val partial = messages.getOrNull(assistantIndex) as? AgentMessageUi
+            val resultTail = content?.let {
+                AgentRunMessageProjector.completedResultTail(runId, messages, assistantIndex, it)
+            }
             val completedMessage: AgentChatMessageUi = when {
                 content != null -> AgentMessageUi(
                     id = resultId,
                     content = if (sameRoundBlocks > 1) {
-                        (messages[assistantIndex] as AgentMessageUi).content.ifBlank { content }
+                        (messages[assistantIndex] as AgentMessageUi).content.ifBlank { resultTail.orEmpty() }
                     } else {
-                        content
+                        resultTail.orEmpty()
                     },
                     isStreaming = false,
                     renderMarkdown = true,
@@ -90,21 +109,34 @@ internal object AgentPendingResultRecovery {
                 messages += completedMessage
             }
         }
+        val finalMessages = mergeSupplements(
+            runId = runId,
+            supplements = listOfNotNull(promptSupplement) + supplements,
+            messages = AgentQuestionProjection.interruptWaiting(runId,
+                VirtualCompletionNotice.append(messagesWithResult, runId, result)),
+            beforeLatestAssistant = true,
+        )
         return Outcome(
             state = state.copy(
-                messages = mergeSupplements(
-                    runId = runId,
-                    supplements = listOfNotNull(promptSupplement) + supplements,
-                    messages = VirtualCompletionNotice.append(messagesWithResult, runId, result),
-                    beforeLatestAssistant = true,
-                ),
+                messages = finalMessages,
                 history = history.state.history,
                 appliedRuntimeRunIds = history.state.appliedRuntimeRunIds,
                 isStreaming = false,
                 isPaused = false,
+                isWaitingForAnswer = AgentQuestionProjection.hasWaiting(finalMessages),
             ),
             alreadyApplied = false,
         )
+    }
+
+    /** Caller compares the final published state with its input, not with recovery's output.
+     * alreadyApplied describes history only: closing question cards may still require a save.
+     */
+    fun stateToPublish(beforeRecovery: AgentChatHomeUiState, recovery: Outcome,
+        finalMessages: List<AgentChatMessageUi>): AgentChatHomeUiState? {
+        val next = recovery.state.copy(messages = finalMessages,
+            isWaitingForAnswer = AgentQuestionProjection.hasWaiting(finalMessages))
+        return next.takeIf { it != beforeRecovery }
     }
 
     private fun AgentChatMessageUi.copyWithId(id: String): AgentChatMessageUi = when (this) {

@@ -16,6 +16,11 @@ class SettingsTest {
     }
 
     @Test
+    fun errorReconnectIsDisabledByDefault() {
+        assertEquals(ErrorReconnectPolicy.NONE, Settings().errorReconnectPolicy)
+    }
+
+    @Test
     fun appearanceUsesBackwardCompatibleDefaults() {
         assertEquals(AppearanceSettings(), Settings().appearance)
     }

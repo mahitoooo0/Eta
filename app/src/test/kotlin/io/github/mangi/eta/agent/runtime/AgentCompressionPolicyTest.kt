@@ -8,6 +8,14 @@ class AgentCompressionPolicyTest {
     private val child = AgentModelClient.ModelConfig(baseUrl = "https://example.com", apiKey = "test",
         model = "child", systemPrompt = "", contextWindow = 32000)
 
+    @Test fun customSummaryInheritsFrozenParentReconnectPolicy() {
+        val parent = child.copy(errorReconnectPolicy = "continuous")
+        val summary = child.copy(model = "custom-summary", errorReconnectPolicy = "none")
+        val policy = AgentCompressionPolicy.create(parent, summary, null, true)
+        assertEquals("continuous", policy.compressModelConfig!!.errorReconnectPolicy)
+        assertEquals("custom-summary", policy.compressModelConfig!!.model)
+    }
+
     @Test fun defaultsOnForChildWhileExplicitPreferenceWins() {
         assertTrue(AgentCompressionPolicy.create(child, child, null, true).enabled)
         assertFalse(AgentCompressionPolicy.create(child, child, false, true).enabled)

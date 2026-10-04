@@ -143,7 +143,6 @@ internal class AgentModelFailure(
                 "模型请求等待超时（连接或写入超时，或读取响应等待超过 ${AgentHttpClient.MODEL_READ_TIMEOUT_MS / 60_000} 分钟）。",
                 failure,
             )
-            is SSLException, is ProtocolException -> null
             is IOException -> AgentModelFailure(
                 "MODEL_CONNECTION_FAILED", true, "模型连接中断或暂时无法建立，请检查网络与服务商状态。", failure,
             )

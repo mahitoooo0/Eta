@@ -160,6 +160,8 @@ import io.github.mangi.eta.ui.markdown.StreamingGfmSnapshot
 import io.github.mangi.eta.ui.markdown.nextStreamingSnapshot
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.ContextCompactedMessageUi
+import io.github.mangi.eta.ui.model.ErrorReconnectMessageUi
+import io.github.mangi.eta.ui.model.ErrorReconnectStatus
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.RunTraceMessageUi
 import io.github.mangi.eta.ui.model.SuggestionChipsMessageUi
@@ -308,6 +310,8 @@ private val StaticPulseAlpha: () -> Float = { 1f }
 
 @Stable
 internal class ChatMessageActions {
+    var onQuestionDraftChanged: (String, String, io.github.mangi.eta.agent.question.AgentQuestionAnswer) -> Unit by mutableStateOf({ _, _, _ -> })
+    var onSubmitQuestionAnswer: (String, String) -> Unit by mutableStateOf({ _, _ -> })
     var onSuggestionClick: (String) -> Unit by mutableStateOf<(String) -> Unit>({})
     var onRunTraceClick: () -> Unit by mutableStateOf<() -> Unit>({})
     var onOpenBrowser: () -> Unit by mutableStateOf<() -> Unit>({})
@@ -343,6 +347,9 @@ internal fun ChatMessageItem(
     speechPreface: String = "",
 ) {
     when (message) {
+        is io.github.mangi.eta.ui.model.AgentQuestionMessageUi -> AgentQuestionCard(message, modifier,
+            onDraftChanged = { draft -> actions.onQuestionDraftChanged(message.request.conversationId, message.request.questionId, draft) },
+            onSubmit = { actions.onSubmitQuestionAnswer(message.request.conversationId, message.request.questionId) })
         is UserMessageUi -> UserMessageBubble(
             message = message,
             actionsEnabled = messageActionsEnabled,
@@ -368,7 +375,15 @@ internal fun ChatMessageItem(
             onBranch = { actions.onBranchMessage(message.id) },
             modifier = modifier,
         )
-        is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.Completed) {
+        is ErrorReconnectMessageUi -> ErrorReconnectDivider(message, modifier)
+        is SystemNoticeMessageUi -> if (message.code == SystemNoticeCode.RuntimeFailed) {
+            ErrorReconnectDivider(
+                ErrorReconnectMessageUi(
+                    id = message.id, runId = "", reconnectId = "legacy:${message.id}", round = 0,
+                    status = ErrorReconnectStatus.Failed, reasonDetail = message.detail.orEmpty(), isReconnect = false,
+                ), modifier,
+            )
+        } else if (message.code == SystemNoticeCode.Completed) {
             TaskCompletedDivider(modifier)
         } else AgentMessageBlock(
             message = AgentMessageUi(
@@ -435,6 +450,7 @@ internal fun AgentWorkProcessHeader(
     modifier: Modifier = Modifier,
     isPaused: Boolean = false,
     expanded: Boolean,
+    hasVisibleSteps: Boolean = expanded,
     onToggle: () -> Unit,
 ) {
     val running = messages.any { message ->
@@ -466,7 +482,7 @@ internal fun AgentWorkProcessHeader(
     val pulseAlpha = rememberActivePulse(active = running && !isPaused, label = "work_pulse")
 
     WorkProcessCardSlice(
-        part = if (expanded && messages.isNotEmpty()) WorkProcessCardPart.First else WorkProcessCardPart.Whole,
+        part = if (hasVisibleSteps && messages.isNotEmpty()) WorkProcessCardPart.First else WorkProcessCardPart.Whole,
         modifier = modifier,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -530,7 +546,7 @@ internal fun AgentWorkProcessHeader(
                 )
             }
 
-            if (expanded && messages.isNotEmpty()) {
+            if (hasVisibleSteps && messages.isNotEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

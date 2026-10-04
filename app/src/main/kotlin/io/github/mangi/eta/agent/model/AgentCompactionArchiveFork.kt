@@ -17,6 +17,10 @@ internal object AgentCompactionArchiveFork {
 
     private data class Reference(val id: String, val toolSource: AgentModelClient.ConversationMessage? = null)
 
+    /** [rewriteAttachmentPath] is an optional, source-cache-scoped path mapper for branches.
+     * Null preserves the original archive bytes and checksums; no import/backup policy is changed.
+     * Relocation starts only once the complete source closure has passed validation.
+     */
     @Synchronized
     fun copyReferenced(
         filesDir: File,
@@ -26,6 +30,7 @@ internal object AgentCompactionArchiveFork {
         archiveLimit: Int = 128,
         byteLimit: Long = 64L * 1024 * 1024,
         depthLimit: Int = 64,
+        rewriteAttachmentPath: ((String) -> String)? = null,
     ) {
         require(sourceSessionId.isNotBlank() && targetSessionId.isNotBlank() && sourceSessionId != targetSessionId)
         require(archiveLimit > 0 && byteLimit > 0 && depthLimit > 0)
@@ -101,6 +106,37 @@ internal object AgentCompactionArchiveFork {
                 completed += id
             }
             roots.forEach { visit(it, 1) }
+            // Only after the entire SOURCE closure passes checksum, schema and reference identity
+            // checks may paths change. Keep the verified originals above for tool identity checks.
+            if (rewriteAttachmentPath != null) {
+                var targetBytes = 0L
+                for (id in completed) {
+                    checkScopes()
+                    val stagedJson = File(staging, "$id.json")
+                    val originalBytes = AgentCompactionArchiveIntegrity.verifiedBytes(
+                        stagedJson, File(staging, "$id.sha256"), byteLimit,
+                    )
+                    val array = JSONArray(originalBytes.toString(Charsets.UTF_8))
+                    var changed = false
+                    for (index in 0 until array.length()) {
+                        interrupted()
+                        if (AgentConversationAttachmentRelocator.rewriteJsonMessage(
+                                array.getJSONObject(index), rewriteAttachmentPath,
+                            )) changed = true
+                    }
+                    val relocated = if (changed) array.toString().toByteArray(Charsets.UTF_8) else originalBytes
+                    check(relocated.size <= MAX_FILE_BYTES && relocated.size <= byteLimit - targetBytes) {
+                        "分支目标原文容量超限"
+                    }
+                    targetBytes += relocated.size
+                    if (changed) {
+                        stagedJson.outputStream().use { it.write(relocated); it.fd.sync() }
+                        File(staging, "$id.sha256").outputStream().use {
+                            it.write(hash(relocated).toByteArray(Charsets.UTF_8)); it.fd.sync()
+                        }
+                    }
+                }
+            }
             checkScopes()
             BackupDurability.syncDirectory(staging)
             // No REPLACE_EXISTING: an existing branch must never be overwritten.

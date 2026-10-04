@@ -197,6 +197,13 @@ internal object ConversationMention {
         is AgentMessageUi -> message.content.trim().takeIf { it.isNotEmpty() }?.let { "Assistant: $it" }
         is ThinkingMessageUi -> message.content.trim().takeIf { it.isNotEmpty() }?.let { "Thinking: $it" }
         is ToolSummaryMessageUi -> message.tools.takeIf { it.isNotEmpty() }?.let { "Tools: ${it.joinToString()}" }
+        is AgentQuestionMessageUi -> buildString {
+            append("Question: ").append(message.request.title).append(" — ").append(message.request.question)
+            val answer = message.answer
+            if (message.status == io.github.mangi.eta.agent.question.AgentQuestionStatus.Answered && answer != null) {
+                append("\nUser answer: ").append(io.github.mangi.eta.agent.question.AgentQuestionCodec.resultJson(message.request, answer))
+            } else append("\nQuestion status: ").append(message.status.name)
+        }
         is ToolActivityMessageUi -> formatToolActivity(message, toolDetailsDirectory, toolEvidence, toolFiles)
         is ContextCompactedMessageUi -> {
             val summary = message.summary.trim()
@@ -204,6 +211,7 @@ internal object ConversationMention {
             else "Context compressed (${message.compactedCount} messages): $summary"
         }
         is SystemNoticeMessageUi -> "系统状态：${message.code.name}"
+        is ErrorReconnectMessageUi -> "Connection status: ${message.status.wireValue} (${formatReconnectElapsed(message.elapsedMs)})"
         is RunTraceMessageUi, is SuggestionChipsMessageUi -> null
     }
     }

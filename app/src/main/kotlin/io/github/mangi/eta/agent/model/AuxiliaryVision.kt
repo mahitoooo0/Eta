@@ -72,12 +72,14 @@ internal class AuxiliaryVision(
             }
             return nearby.asReversed().joinToString("\n").takeLast(12_000)
         }
-        fun create(main: AgentModelClient.ModelConfig, controller: AgentRunController, sessionId: String): AuxiliaryVision {
+        fun create(main: AgentModelClient.ModelConfig, controller: AgentRunController, sessionId: String,
+            onErrorReconnect: (io.github.mangi.eta.agent.runtime.AgentEvent.ErrorReconnectChanged) -> Unit = {},
+        ): AuxiliaryVision {
             val selection = ModelFeaturePreferences.selection(ModelFeature.VISION)
             val enabled = !main.supportsVision && selection.custom
             var resolved: AgentModelClient.ModelConfig? = null
             return AuxiliaryVision(enabled) { imageContent, context ->
-                val config = resolved ?: runBlocking { selection.resolve() }?.also {
+                val config = resolved ?: runBlocking { selection.resolve() }?.copy(errorReconnectPolicy = main.errorReconnectPolicy)?.also {
                     require(it.supportsVision) { "辅助视觉模型不支持图片，请重新选择" }
                     resolved = it
                 } ?: error("辅助视觉已开启，但模型不可用，请在设置 → 模型功能中选择视觉模型")
@@ -90,7 +92,7 @@ internal class AuxiliaryVision(
                     .put(JSONObject().put("role", "user").put("content", JSONArray()
                         .put(JSONObject().put("type", "text").put("text", "相关任务与工具观察：\n$context"))
                         .also { parts -> for (j in 0 until imageContent.length()) parts.put(imageContent.get(j)) }))
-                ModelFeatureCompletion.complete(config, prompt, controller, "$sessionId-vision", usageConversationId = sessionId)
+                ModelFeatureCompletion.complete(config, prompt, controller, "$sessionId-vision", usageConversationId = sessionId, onErrorReconnect = onErrorReconnect)
             }
         }
     }

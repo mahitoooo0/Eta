@@ -17,6 +17,12 @@ internal object AgentParentNetworkFailure {
             is AgentModelFailure -> throwable
             else -> null
         } ?: return false
+        if (failure.code == "ERROR_RECONNECT_DEADLINE") return true
+        // Replay protection changes whether a request may be resent, not child disposition.
+        if (failure.code == "UNSAFE_TOOL_REPLAY") {
+            val underlying = failure.cause as? AgentModelFailure ?: return false
+            return isFinal(underlying, cancelled = false)
+        }
         // Exhaustion wraps the retryable failure in a non-retryable one with the same code.
         // Permanent quota/auth/config errors and rejected tool envelopes are not network outages.
         return failure.code in networkCodes &&

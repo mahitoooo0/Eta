@@ -1,6 +1,10 @@
 package io.github.mangi.eta.agent.runtime
 
 import android.content.Context
+import io.github.mangi.eta.agent.question.AgentQuestionAnswer
+import io.github.mangi.eta.agent.question.AgentQuestionCodec
+import io.github.mangi.eta.agent.question.AgentQuestionReceipt
+import io.github.mangi.eta.agent.question.AgentQuestionStatus
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -179,6 +183,58 @@ internal class AgentRuntimeClient(private val context: Context, private val logg
             if (childTaskId == null) true else latch.await(5, TimeUnit.SECONDS) && reply.get() == true
         }
     }
+    /** Invoke off Main: its Messenger reply handler needs the main Looper to deliver the ACK. */
+    fun submitQuestionAnswer(conversationId: String, runId: String, questionId: String,
+        toolCallId: String, answer: AgentQuestionAnswer): AgentQuestionReceipt {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return AgentQuestionReceipt(false, "QUESTION_MAIN_THREAD", "请在后台提交回答")
+        }
+        val unavailable = AgentQuestionReceipt(false, "QUESTION_RUNTIME_UNAVAILABLE", "暂时无法连接运行时，请重试")
+        val payload = runCatching {
+            AgentRuntimeWire.questionAnswerBundle(conversationId, runId, questionId, toolCallId, answer)
+        }.getOrElse { return AgentQuestionReceipt(false, "QUESTION_INVALID_ANSWER", "回答格式无效") }
+        return withRuntimeMessenger(unavailable) { serviceMessenger ->
+            val receipt = AtomicReference<AgentQuestionReceipt?>(null)
+            val latch = CountDownLatch(1)
+            val reply = Messenger(Handler(Looper.getMainLooper()) { response ->
+                if (response.what == AgentRuntimeWire.MSG_QUESTION_ANSWER_RESPONSE &&
+                    response.data.getString("question_id") == questionId) {
+                    receipt.compareAndSet(null, AgentRuntimeWire.questionReceiptFromBundle(response.data))
+                    latch.countDown()
+                }
+                true
+            })
+            serviceMessenger.send(Message.obtain(null, AgentRuntimeWire.MSG_QUESTION_ANSWER).apply {
+                data = payload
+                replyTo = reply
+            })
+            if (latch.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) receipt.get() ?: unavailable
+            else AgentQuestionReceipt(false, "QUESTION_ACK_TIMEOUT", "回答受理尚未确认，请查看问题状态后重试")
+        }
+    }
+
+    fun queryQuestion(conversationId: String, runId: String, questionId: String, toolCallId: String):
+        io.github.mangi.eta.agent.question.AgentQuestionSnapshot? {
+        if (Looper.myLooper() == Looper.getMainLooper()) return null
+        val payload = runCatching { AgentRuntimeWire.questionQueryBundle(conversationId, runId, questionId, toolCallId) }.getOrNull() ?: return null
+        return withRuntimeMessenger<io.github.mangi.eta.agent.question.AgentQuestionSnapshot?>(null) { service ->
+            val snapshot = AtomicReference<io.github.mangi.eta.agent.question.AgentQuestionSnapshot?>(null)
+            val latch = CountDownLatch(1)
+            val reply = Messenger(Handler(Looper.getMainLooper()) { response ->
+                if (response.what == AgentRuntimeWire.MSG_QUERY_QUESTION_RESPONSE &&
+                    response.data.getString("conversation_id") == conversationId &&
+                    AgentRuntimeWire.runIdFromBundle(response.data) == runId &&
+                    response.data.getString("question_id") == questionId &&
+                    response.data.getString("tool_call_id") == toolCallId) {
+                    snapshot.set(AgentRuntimeWire.questionSnapshotFromBundle(response.data)); latch.countDown()
+                }
+                true
+            })
+            service.send(Message.obtain(null, AgentRuntimeWire.MSG_QUERY_QUESTION).apply { data = payload; replyTo = reply })
+            if (latch.await(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) snapshot.get() else null
+        }
+    }
+
     fun ackResult(runId: String): Boolean {
         if (runId.isBlank()) return false
         return withRuntimeMessenger(false) { serviceMessenger ->

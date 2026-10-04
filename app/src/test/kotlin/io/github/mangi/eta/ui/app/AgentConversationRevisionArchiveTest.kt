@@ -143,6 +143,53 @@ class AgentConversationRevisionArchiveTest {
         assertEquals(tools, branch.history.takeLast(2))
     }
 
+    @Test fun bSummaryCanCoexistWithSummaryTitledAssistantAndFullToolBatch() {
+        val original = layeredState()
+        val assistant = reply("tail", "[对话摘要] legitimate assistant answer").copy(
+            toolCallsJson = """[{"id":"one"},{"id":"two"}]""")
+        val tools = listOf(
+            ConversationMessage("tool", "[对话摘要] legitimate tool result", toolCallId = "one", turnId = "tail"),
+            ConversationMessage("tool", "second full result", toolCallId = "two", turnId = "tail"),
+        )
+        val source = original.copy(
+            messages = original.messages.dropLast(1) + AgentMessageUi("assistant-tail-1", assistant.content),
+            history = listOf(summary(bId), user("tail", "tail"), assistant) + tools,
+        )
+        val calls = mutableListOf<String>()
+        val prepared = AgentConversationRevisionReducer.prepareForRevision(source, "user-h") {
+            calls += it; bArchive()
+        }!!
+        assertEquals(listOf(bId), calls)
+        assertEquals(bArchive() + source.history.drop(1), prepared.history)
+        assertEquals(prepared.history, AgentConversationRevisionReducer.branchPrefix(prepared, "assistant-tail-1")!!.history)
+        assertEquals(original.history.first(), source.history.first())
+    }
+
+    @Test fun restoredAPlusHPreservesSummaryTitledToolAndCompleteBatch() {
+        val source = layeredState()
+        val assistant = reply("h", "answer").copy(toolCallsJson = """[{"id":"one"},{"id":"two"}]""")
+        val tools = listOf(
+            ConversationMessage("tool", "[对话摘要] legitimate tool result", toolCallId = "one", turnId = "h"),
+            ConversationMessage("tool", "second full result", toolCallId = "two", turnId = "h"),
+        )
+        val archive = listOf(summary(aId), user("h", "question"), assistant) + tools + reply("h", "later answer")
+        val calls = mutableListOf<String>()
+        val prepared = AgentConversationRevisionReducer.prepareForRevision(source, "assistant-h-1") {
+            calls += it; archive
+        }!!
+        assertEquals(listOf(bId), calls)
+        assertEquals(archive.take(5), AgentConversationRevisionReducer.branchPrefix(prepared, "assistant-h-1")!!.history)
+        assertEquals(listOf(summary(aId)), AgentConversationRevisionReducer.boundary(prepared, "user-h")!!.historyPrefix)
+    }
+
+    @Test fun checkpointLoaderCancellationIsRethrown() {
+        val cancellation = java.util.concurrent.CancellationException("cancelled")
+        try {
+            AgentConversationRevisionReducer.prepareForRevision(layeredState(), "user-h") { throw cancellation }
+            fail("Checkpoint cancellation must propagate")
+        } catch (failure: java.util.concurrent.CancellationException) { assertSame(cancellation, failure) }
+    }
+
     @Test fun knownToolBatchCannotBeTruncatedOrCommittedIncomplete() {
         val source = layeredState()
         val assistant = reply("h", "answer").copy(toolCallsJson = """[{"id":"one"},{"id":"two"}]""")
@@ -177,12 +224,21 @@ class AgentConversationRevisionArchiveTest {
         })
         assertEquals(listOf(bId, aId), calls)
         val duplicate = source.copy(history = listOf(summary(bId).copy(content = summary(bId).content + "\ncontext-checkpoint:$bId")))
-        assertNull(AgentConversationRevisionReducer.prepareForRevision(duplicate, "user-h") { error("must not load") })
+        assertNoArchiveLoad(duplicate, "user-h")
         assertNull(AgentConversationRevisionReducer.prepareForRevision(source, "user-h") { listOf(summary(aId), summary(aId)) })
     }
 
     @Test fun onlyTheUniqueTrailingGeneratedSummaryFootnoteCanSupplyAnId() {
         val source = layeredState()
+        for (role in listOf("user", "system")) {
+            val legacy = ConversationMessage(role, "[对话摘要]\nlegacy summary without footer")
+            assertTrue(AgentConversationRevisionArchive.isRevisionSummary(legacy))
+            assertNull(AgentConversationRevisionArchive.checkpoint(legacy))
+        }
+        for (role in listOf("assistant", "tool")) {
+            assertFalse(AgentConversationRevisionArchive.isRevisionSummary(summary(bId).copy(role = role)))
+            assertNull(AgentConversationRevisionArchive.checkpoint(summary(bId).copy(role = role)))
+        }
         val invalid = listOf(
             summary(bId).copy(content = "[对话摘要]\ncontext-checkpoint:$bId"),
             summary(bId).copy(content = summary(bId).content + "\nafter pointer"),
@@ -191,18 +247,18 @@ class AgentConversationRevisionArchiveTest {
             summary(bId).copy(role = "tool"),
         )
         for (message in invalid) {
-            assertNull(AgentConversationRevisionReducer.prepareForRevision(source.copy(history = listOf(message)), "user-h") { error("must not load") })
+            assertNoArchiveLoad(source.copy(history = listOf(message)), "user-h")
         }
         // A UI marker with even an apparent checkpoint is never a capability.
         val onlyUi = source.copy(messages = source.messages + ContextCompactedMessageUi("fake", 5, summary(bId).content), history = emptyList())
-        assertNull(AgentConversationRevisionReducer.prepareForRevision(onlyUi, "user-h") { error("must not load") })
+        assertNoArchiveLoad(onlyUi, "user-h")
     }
 
     @Test fun toolPruningPointerIsNotASummaryRollbackCapability() {
         val tool = ConversationMessage("tool", "head\n[Eta tool output pruned; original: context-checkpoint:$bId; read_compacted_history]\ntail")
         val source = layeredState().copy(history = listOf(tool),
             messages = listOf(UserMessageUi("user-h", "question"), ContextCompactedMessageUi("pruned", 0, "")))
-        assertNull(AgentConversationRevisionReducer.prepareForRevision(source, "user-h") { error("must not load tool pointer") })
+        assertNoArchiveLoad(source, "user-h")
     }
 
     @Test fun duplicatePayloadWithoutCompleteIdentityAlignmentIsRejected() {
@@ -231,17 +287,28 @@ class AgentConversationRevisionArchiveTest {
 
     @Test fun anUnrecordedNewerMessageCannotTriggerExpansionOfUnrelatedOldSummary() {
         val source = layeredState().copy(messages = layeredState().messages + UserMessageUi("user-new", "never stored"))
-        assertNull(AgentConversationRevisionReducer.prepareForRevision(source, "user-new") { error("do not open B or A") })
+        val assistant = reply("tail", "[对话摘要] legitimate assistant answer").copy(toolCallsJson = """[{"id":"one"}]""")
+        val titledOutput = source.copy(history = source.history.dropLast(1) + assistant +
+            ConversationMessage("tool", "[对话摘要] legitimate tool result", toolCallId = "one", turnId = "tail"))
+        for (candidate in listOf(source, titledOutput)) assertNoArchiveLoad(candidate, "user-new")
     }
 
     @Test fun ordinaryExactRevisionDoesNotLoadArchivesOrInvalidateSourceReceipt() {
         val source = layeredState().copy(history = bArchive() + layeredState().history.drop(1))
-        val prepared = AgentConversationRevisionReducer.prepareForRevision(source, "user-tail") { error("do not expand A") }
+        var loads = 0
+        val prepared = AgentConversationRevisionReducer.prepareForRevision(source, "user-tail") { loads++; emptyList() }
+        assertEquals(0, loads)
         assertSame(source, prepared)
         assertEquals(999, prepared!!.livePromptTokens)
         assertEquals(source.history.dropLast(2), AgentConversationRevisionReducer.boundary(prepared, "user-tail")!!.historyPrefix)
         assertEquals(source.history.dropLast(1), AgentConversationRevisionReducer.branchPrefix(prepared, "user-tail")!!.history)
         assertEquals(source.history.dropLast(2), AgentConversationRevisionReducer.deleteFromTurn(prepared, "user-tail")!!.history)
+    }
+
+    private fun assertNoArchiveLoad(source: AgentChatUiState, messageId: String) {
+        var loads = 0
+        assertNull(AgentConversationRevisionReducer.prepareForRevision(source, messageId) { loads++; emptyList() })
+        assertEquals(0, loads)
     }
 
     @Test fun restorationLimitsRejectExcessMessagesCharactersAndDepth() {

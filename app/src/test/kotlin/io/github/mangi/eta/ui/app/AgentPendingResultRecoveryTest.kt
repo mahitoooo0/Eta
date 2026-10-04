@@ -1,6 +1,12 @@
 package io.github.mangi.eta.ui.app
 
 import io.github.mangi.eta.agent.model.AgentModelClient
+import io.github.mangi.eta.agent.question.AgentQuestionAnswer
+import io.github.mangi.eta.agent.question.AgentQuestionOption
+import io.github.mangi.eta.agent.question.AgentQuestionRequest
+import io.github.mangi.eta.agent.question.AgentQuestionSnapshot
+import io.github.mangi.eta.agent.question.AgentQuestionStatus
+import io.github.mangi.eta.ui.model.AgentQuestionMessageUi
 import io.github.mangi.eta.agent.runtime.AgentRuntimeWire
 import io.github.mangi.eta.agent.runtime.AgentUiHandoffPayload
 import io.github.mangi.eta.ui.model.UserMessageUi
@@ -16,6 +22,98 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentPendingResultRecoveryTest {
+    private fun question(run: String = "run-question", q: String = "q") = AgentQuestionMessageUi(
+        id = "question-$run-$q",
+        request = AgentQuestionRequest(q, "chat", run, "call-$q", "Decide", "Choose",
+            listOf(AgentQuestionOption("a", "A"), AgentQuestionOption("b", "B"))),
+        selectedOptionId = "a", note = "draft", submitting = true,
+    )
+
+    @Test fun alreadyAppliedQuestionClosureStillPublishesAndRequiresSave() {
+        val pending = question()
+        val history = listOf(AgentModelClient.ConversationMessage("assistant", "already committed"))
+        val before = AgentChatUiState(messages = listOf(pending), input = "", isStreaming = false,
+            thinkingEnabled = false, history = history, appliedRuntimeRunIds = listOf("run-question"),
+            isWaitingForAnswer = true)
+        val outcome = AgentPendingResultRecovery.apply(before, "run-question",
+            AgentRuntimeWire.RunResult("run-question", true, "not appended twice"), supplements = emptyList())
+        assertTrue(outcome.alreadyApplied)
+        // This is the production caller helper. Identical ordering to recovery's output must
+        // not suppress a changed card just because its history run was already applied.
+        val publish = AgentPendingResultRecovery.stateToPublish(before, outcome, outcome.state.messages)
+        org.junit.Assert.assertNotNull(publish)
+        val next = publish!!
+        assertEquals(history, next.history)
+        assertEquals(listOf("run-question"), next.appliedRuntimeRunIds)
+        val closed = next.messages.single() as AgentQuestionMessageUi
+        assertEquals(AgentQuestionStatus.Interrupted, closed.status)
+        assertEquals("draft", closed.note)
+        assertFalse(closed.submitting)
+        assertFalse(next.isWaitingForAnswer)
+        val replay = AgentPendingResultRecovery.apply(next, "run-question",
+            AgentRuntimeWire.RunResult("run-question", true, "ignored"), supplements = emptyList())
+        org.junit.Assert.assertNull(AgentPendingResultRecovery.stateToPublish(next, replay, replay.state.messages))
+    }
+
+    @Test fun alreadyAppliedClosureIsCorrectedByAuthoritativeReadBeforeFinalPublication() {
+        val pending = question()
+        val before = AgentChatUiState(messages = listOf(pending), input = "", isStreaming = false,
+            thinkingEnabled = false, appliedRuntimeRunIds = listOf("run-question"), isWaitingForAnswer = true)
+        val outcome = AgentPendingResultRecovery.apply(before, "run-question",
+            AgentRuntimeWire.RunResult("run-question", true, "ignored"), supplements = emptyList())
+        val owner = AgentQuestionProjection.recoveryOwners("chat", outcome.state.messages).single()
+        val finalMessages = AgentQuestionProjection.reconcileMessages(outcome.state.messages, owner,
+            AgentQuestionSnapshot("chat", "run-question", "q", "call-q", AgentQuestionStatus.Answered,
+                AgentQuestionAnswer("option", "a", note = "consumed")))
+        val next = AgentPendingResultRecovery.stateToPublish(before, outcome, finalMessages)!!
+        assertTrue(outcome.alreadyApplied)
+        assertEquals(AgentQuestionStatus.Answered, (next.messages.single() as AgentQuestionMessageUi).status)
+        assertEquals("consumed", (next.messages.single() as AgentQuestionMessageUi).answer!!.note)
+        assertFalse(next.isWaitingForAnswer)
+    }
+
+    @Test fun nonAppliedRecoveryAndFinalPublicationDeriveWaitingFromActualFinalMessages() {
+        val before = AgentChatUiState(messages = listOf(question()), input = "", isStreaming = true,
+            thinkingEnabled = false, isWaitingForAnswer = true)
+        val outcome = AgentPendingResultRecovery.apply(before, "run-question",
+            AgentRuntimeWire.RunResult("run-question", true, "answer"),
+            supplements = listOf(AgentUiHandoffPayload.Supplement(1, "accepted supplement", 1L)))
+        assertFalse(outcome.alreadyApplied)
+        assertEquals(AgentQuestionStatus.Interrupted,
+            outcome.state.messages.filterIsInstance<AgentQuestionMessageUi>().single().status)
+        assertTrue(outcome.state.messages.any { it is UserMessageUi })
+        assertFalse(outcome.state.isWaitingForAnswer)
+        assertEquals(AgentQuestionProjection.hasWaiting(outcome.state.messages), outcome.state.isWaitingForAnswer)
+
+        val waiting = question(run = "still-active", q = "other")
+        val next = AgentPendingResultRecovery.stateToPublish(before, outcome, outcome.state.messages + waiting)!!
+        assertTrue(next.isWaitingForAnswer)
+        val finalAnswered = AgentQuestionProjection.reconcileMessages(next.messages, waiting.request,
+            AgentQuestionSnapshot("chat", "still-active", "other", "call-other", AgentQuestionStatus.Answered,
+                AgentQuestionAnswer("option", "a")))
+        val corrected = AgentPendingResultRecovery.stateToPublish(next, outcome, finalAnswered)!!
+        assertFalse(corrected.isWaitingForAnswer)
+        assertEquals(AgentQuestionProjection.hasWaiting(corrected.messages), corrected.isWaitingForAnswer)
+    }
+
+    @Test fun closingOneRunDoesNotDropAnotherRunsQuestionWait() {
+        for (applied in listOf(false, true)) {
+            val pending = question()
+            val active = question(run = "active", q = "active")
+            val before = AgentChatUiState(messages = listOf(pending, active), input = "", isStreaming = false,
+                thinkingEnabled = false, appliedRuntimeRunIds = if (applied) listOf("run-question") else emptyList(),
+                isWaitingForAnswer = false)
+            val outcome = AgentPendingResultRecovery.apply(before, "run-question",
+                AgentRuntimeWire.RunResult("run-question", false, "", "stopped"), supplements = emptyList())
+            val next = AgentPendingResultRecovery.stateToPublish(before, outcome, outcome.state.messages)!!
+            val cards = next.messages.filterIsInstance<AgentQuestionMessageUi>()
+            assertEquals(AgentQuestionStatus.Interrupted, cards.first().status)
+            assertEquals(active, cards.last())
+            assertTrue(next.isWaitingForAnswer)
+            assertEquals(AgentQuestionProjection.hasWaiting(next.messages), next.isWaitingForAnswer)
+        }
+    }
+
     @Test fun recoveryKeepsCompletionTimeInsteadOfUsingRecoveryTime() {
         val state = AgentChatUiState(messages = listOf(
             UserMessageUi("user-run-time", "question"),
@@ -77,7 +175,18 @@ class AgentPendingResultRecoveryTest {
                 supplements = emptyList(),
             )
             assertEquals(listOf(partial, notice), recovered.state.messages.take(2))
-            assertEquals("assistant-retry-run-2-result", recovered.state.messages.last().id)
+            if (ok) {
+                assertEquals("assistant-retry-run-2-result", recovered.state.messages.last().id)
+            } else {
+                assertEquals(
+                    io.github.mangi.eta.ui.model.errorReconnectMessageId("retry-run", "terminal-failure"),
+                    recovered.state.messages.last().id,
+                )
+                assertEquals(
+                    io.github.mangi.eta.ui.model.ErrorReconnectStatus.Failed,
+                    (recovered.state.messages.last() as io.github.mangi.eta.ui.model.ErrorReconnectMessageUi).status,
+                )
+            }
             assertEquals(3, recovered.state.messages.size)
         }
     }
@@ -151,6 +260,28 @@ class AgentPendingResultRecoveryTest {
         assertEquals(recovered.state, replay.state)
     }
 
+    @Test fun failedOutboxRetainsPartialTextToolAndDisconnectedMarkerIdentity() {
+        val partial = AgentMessageUi("assistant-run-failed-1-0", "partial response", isStreaming = true)
+        val tool = ToolActivityMessageUi("run-failed-tool-1-call", "read_file", ToolActivityStatusUi.Success, "{}")
+        val marker = io.github.mangi.eta.ui.model.ErrorReconnectMessageUi(
+            id = io.github.mangi.eta.ui.model.errorReconnectMessageId("run-failed", "disconnect"),
+            runId = "run-failed", reconnectId = "disconnect", round = 1,
+            status = io.github.mangi.eta.ui.model.ErrorReconnectStatus.Running,
+            reasonCode = "HTTP_502", reasonDetail = "provider diagnostic",
+        )
+        val state = AgentChatUiState(messages = listOf(partial, tool, marker), input = "",
+            isStreaming = true, thinkingEnabled = false)
+        val result = AgentRuntimeWire.RunResult("run-failed", ok = false, content = "", error = "terminal error")
+        val recovered = AgentPendingResultRecovery.apply(state, "run-failed", result, supplements = emptyList())
+        assertEquals(listOf(partial.id, tool.id, marker.id), recovered.state.messages.map { it.id })
+        assertEquals("partial response", (recovered.state.messages.first() as AgentMessageUi).content)
+        assertEquals(tool, recovered.state.messages[1])
+        assertEquals(marker.copy(status = io.github.mangi.eta.ui.model.ErrorReconnectStatus.Failed), recovered.state.messages.last())
+        val repeated = AgentPendingResultRecovery.apply(recovered.state, "run-failed", result, supplements = emptyList())
+        assertTrue(repeated.alreadyApplied)
+        assertEquals(recovered.state, repeated.state)
+    }
+
     @Test
     fun recoveryCreatesAssistantWhenStreamingPlaceholderWasNeverPersisted() {
         val state = AgentChatUiState(
@@ -172,10 +303,11 @@ class AgentPendingResultRecoveryTest {
             supplements = emptyList(),
         )
 
-        assertEquals("assistant-run-2-1", recovered.state.messages.single().id)
-        val message = recovered.state.messages.single() as SystemNoticeMessageUi
-        assertEquals(SystemNoticeCode.RuntimeFailed, message.code)
-        assertEquals("失败原因", message.detail)
+        val message = recovered.state.messages.single() as io.github.mangi.eta.ui.model.ErrorReconnectMessageUi
+        assertEquals(io.github.mangi.eta.ui.model.errorReconnectMessageId("run-2", "terminal-failure"), message.id)
+        assertEquals(io.github.mangi.eta.ui.model.ErrorReconnectStatus.Failed, message.status)
+        assertEquals("失败原因", message.reasonDetail)
+        org.junit.Assert.assertFalse(message.isReconnect)
     }
 
     @Test

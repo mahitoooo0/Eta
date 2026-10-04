@@ -4,6 +4,9 @@ import android.os.SystemClock
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
+import io.github.mangi.eta.ui.model.ErrorReconnectMessageUi
+import io.github.mangi.eta.ui.model.ErrorReconnectStatus
+import io.github.mangi.eta.ui.model.errorReconnectMessageId
 import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
@@ -42,6 +45,15 @@ internal class AgentRunMessageProjector(
     // Message-list position is not event order: a resumed text block can stay before an old tool.
     // Keep the ordering evidence separately so an old tool cannot unlock a later late-thinking block.
     private val roundEventStates = mutableMapOf<RoundEventKey, RoundEventState>()
+    private val textSegments = mutableMapOf<RoundEventKey, String>()
+
+    fun requestQuestion(conversationId: String, runId: String, event: AgentEvent.QuestionRequested,
+        messages: List<AgentChatMessageUi>, replaying: Boolean = false): List<AgentChatMessageUi> =
+        AgentQuestionProjection.requested(conversationId, runId, event.request, messages, !isSealed(runId), replaying)
+
+    fun resolveQuestion(conversationId: String, runId: String, event: AgentEvent.QuestionResolved,
+        messages: List<AgentChatMessageUi>): List<AgentChatMessageUi> =
+        AgentQuestionProjection.resolved(conversationId, runId, event, messages)
 
     fun isSealed(runId: String): Boolean = runId in sealedRunIds
 
@@ -69,6 +81,8 @@ internal class AgentRunMessageProjector(
                 is AgentMessageUi -> isAssistantMessageForRun(message.id, runId)
                 is ThinkingMessageUi -> message.id.startsWith("$runId-thinking-")
                 is ToolActivityMessageUi -> message.id.startsWith("$runId-tool-")
+                is ErrorReconnectMessageUi -> message.runId == runId ||
+                    (message.runId.isBlank() && (isAssistantMessageForRun(message.id, runId) || message.id == "interrupted-$runId"))
                 is SystemNoticeMessageUi ->
                     isAssistantMessageForRun(message.id, runId) || message.id == "interrupted-$runId"
                 is UserMessageUi -> message.id in replaySupplementIds
@@ -105,6 +119,85 @@ internal class AgentRunMessageProjector(
         )
         return finalized.filterNot { it.id == notice.id } + notice
     }
+
+    /** Progress updates replace one row in place; only a new disconnection creates a boundary. */
+    fun reconnectChanged(
+        runId: String,
+        event: AgentEvent.ErrorReconnectChanged,
+        messages: List<AgentChatMessageUi>,
+    ): List<AgentChatMessageUi> {
+        val status = ErrorReconnectStatus.fromWireValue(event.status) ?: return messages
+        val id = errorReconnectMessageId(runId, event.reconnectId)
+        val existing = messages.filterIsInstance<ErrorReconnectMessageUi>().firstOrNull { it.id == id }
+        // Ignore delayed progress after a terminal update, even when the run later resumes.
+        if (existing != null && existing.status != ErrorReconnectStatus.Running && status == ErrorReconnectStatus.Running) {
+            return messages
+        }
+        if (isSealed(runId) && existing == null && status == ErrorReconnectStatus.Running) return messages
+        val marker = ErrorReconnectMessageUi(
+            id = id, runId = runId, reconnectId = event.reconnectId, round = event.round,
+            status = existing?.status?.takeIf { it != ErrorReconnectStatus.Running } ?: status,
+            elapsedMs = maxOf(existing?.elapsedMs ?: 0L, event.elapsedMs.coerceAtLeast(0L)),
+            reasonCode = event.reasonCode.ifBlank { existing?.reasonCode.orEmpty() },
+            reasonDetail = event.reasonDetail.ifBlank { existing?.reasonDetail.orEmpty() },
+        )
+        if (existing != null) return messages.map { if (it.id == id) marker else it }
+        discardPendingThinking(runId, event.round)
+        roundEventStates.remove(RoundEventKey(runId, event.round))
+        // Continued provider blocks may reuse their index. Keep the partial bubble before
+        // the marker and give the following segment its own deterministic replay identity.
+        textSegments[RoundEventKey(runId, event.round)] = event.reconnectId
+        return freezeAtDisconnection(runId, messages) + marker
+    }
+
+    /** Used both by live terminal handling and outbox recovery (no event replay required). */
+    fun terminalFailure(
+        runId: String,
+        reason: String,
+        messages: List<AgentChatMessageUi>,
+        reasonCode: String = "",
+        round: Int = 0,
+    ): List<AgentChatMessageUi> {
+        val finalized = finalizeRun(runId, messages).filterNot {
+            it is AgentMessageUi && isAssistantMessageForRun(it.id, runId) && it.content.isBlank()
+        }
+        val latest = finalized.filterIsInstance<ErrorReconnectMessageUi>().lastOrNull { it.runId == runId }
+        if (latest != null && latest.status != ErrorReconnectStatus.Succeeded) {
+            return finalized.map { message ->
+                if (message.id == latest.id) latest.copy(
+                    status = if (latest.status == ErrorReconnectStatus.Stopped) latest.status else ErrorReconnectStatus.Failed,
+                    reasonCode = latest.reasonCode.ifBlank { reasonCode },
+                    reasonDetail = latest.reasonDetail.ifBlank { reason },
+                ) else message
+            }
+        }
+        // Repeated terminal folding is idempotent. A later failed run never replaces
+        // another run's marker, and a successful earlier reconnect remains intact.
+        val reconnectId = "terminal-failure"
+        val id = errorReconnectMessageId(runId, reconnectId)
+        if (finalized.any { it.id == id }) return finalized
+        return finalized + ErrorReconnectMessageUi(
+            id = id, runId = runId, reconnectId = reconnectId, round = round,
+            status = ErrorReconnectStatus.Failed, reasonCode = reasonCode,
+            reasonDetail = reason, isReconnect = false,
+        )
+    }
+
+    /** Manual cancellation is stopped, never succeeded. Pause alone must not call this. */
+    fun runStopped(runId: String, messages: List<AgentChatMessageUi>): List<AgentChatMessageUi> =
+        finalizeRun(runId, messages).map { message ->
+            if (message is ErrorReconnectMessageUi && message.runId == runId &&
+                message.status == ErrorReconnectStatus.Running
+            ) message.copy(status = ErrorReconnectStatus.Stopped) else message
+        }
+
+    private fun freezeAtDisconnection(runId: String, messages: List<AgentChatMessageUi>): List<AgentChatMessageUi> =
+        finalizeThinking(runId, messages).map { message ->
+            if (message is AgentMessageUi && isAssistantMessageForRun(message.id, runId)) {
+                // Do not trim a join boundary until the run really ends.
+                message.copy(isStreaming = false, renderMarkdown = true)
+            } else message
+        }
 
     fun startAssistantBlock(
         runId: String,
@@ -279,7 +372,7 @@ internal class AgentRunMessageProjector(
     /** 终态不依赖各块结束事件全部到齐；缺少工具结果时只能标为未知，不能推断执行成功。 */
     fun finalizeRun(runId: String, messages: List<AgentChatMessageUi>): List<AgentChatMessageUi> {
         seal(runId)
-        return finalizeText(runId, finalizeThinking(runId, messages)).map { message ->
+        val finalized = finalizeText(runId, finalizeThinking(runId, messages)).map { message ->
             if (
                 message is ToolActivityMessageUi &&
                 message.id.startsWith("$runId-tool-") &&
@@ -290,6 +383,7 @@ internal class AgentRunMessageProjector(
                 message
             }
         }
+        return AgentQuestionProjection.interruptWaiting(runId, finalized)
     }
 
     fun finalizeThinkingRound(
@@ -513,6 +607,7 @@ internal class AgentRunMessageProjector(
         thinkingBlockAnchors.keys.removeAll { it.runId == runId }
         roundEventStates.keys.removeAll { it.runId == runId }
         thinkingStartedAt.keys.removeAll { it.startsWith("$runId-thinking-") }
+        textSegments.keys.removeAll { it.runId == runId }
     }
 
     private fun recordTextEvent(runId: String, round: Int) {
@@ -690,8 +785,11 @@ internal class AgentRunMessageProjector(
         }
     }
 
-    private fun assistantMessageId(runId: String, round: Int, index: Int): String =
-        "${assistantMessagePrefix(runId)}$round-$index"
+    private fun assistantMessageId(runId: String, round: Int, index: Int): String {
+        val segment = textSegments[RoundEventKey(runId, round)]
+        val suffix = segment?.let { "-reconnect-${it.length}:$it" }.orEmpty()
+        return "${assistantMessagePrefix(runId)}$round-$index$suffix"
+    }
 
     private fun thinkingMessageId(runId: String, round: Int, index: Int): String =
         "$runId-thinking-$round-$index"
@@ -728,17 +826,39 @@ internal class AgentRunMessageProjector(
             } ?: -1
         }
 
+        /** Retry completion includes the interrupted prefix; only append its unseen tail.
+         * Earlier completed tool rounds and other runs never participate in this seam. */
+        fun completedResultTail(
+            runId: String, messages: List<AgentChatMessageUi>, targetIndex: Int, result: String,
+        ): String {
+            val reconnect = messages.filterIsInstance<ErrorReconnectMessageUi>()
+                .lastOrNull { it.runId == runId && it.status == ErrorReconnectStatus.Succeeded }
+                ?: return result
+            val end = if (targetIndex >= 0) targetIndex else messages.size
+            val prefix = messages.take(end).filterIsInstance<AgentMessageUi>()
+                .filter { message ->
+                    isAssistantMessageForRun(message.id, runId) &&
+                        (message.id.removePrefix("assistant-$runId-").substringBefore('-')
+                            .toIntOrNull() ?: -1) >= reconnect.round
+                }.joinToString("") { it.content }
+            return if (prefix.isNotEmpty() && result.startsWith(prefix)) result.removePrefix(prefix) else result
+        }
+
         fun resultFallbackId(runId: String, messages: List<AgentChatMessageUi>): String {
             val retry = messages.getOrNull(lastRetryIndex(runId, messages))
             if (retry == null) return "assistant-$runId-1"
+            if (retry is ErrorReconnectMessageUi) {
+                return "assistant-$runId-${retry.round.coerceAtLeast(1)}-result-reconnect-${retry.reconnectId.length}:${retry.reconnectId}"
+            }
             val round = retry.id.substringAfterLast('-').toIntOrNull()?.plus(1) ?: 1
             return "assistant-$runId-$round-result"
         }
 
         private fun lastRetryIndex(runId: String, messages: List<AgentChatMessageUi>): Int =
             messages.indexOfLast {
-                it is SystemNoticeMessageUi && it.code == SystemNoticeCode.ModelRetry &&
-                    it.id.startsWith("assistant-$runId-retry-")
+                (it is SystemNoticeMessageUi && it.code == SystemNoticeCode.ModelRetry &&
+                    it.id.startsWith("assistant-$runId-retry-")) ||
+                    (it is ErrorReconnectMessageUi && it.runId == runId)
             }
 
         private fun assistantMessagePrefix(runId: String): String =

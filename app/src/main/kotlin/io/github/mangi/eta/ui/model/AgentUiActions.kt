@@ -1,11 +1,18 @@
 package io.github.mangi.eta.ui.model
 
 import io.github.mangi.eta.data.model.ReasoningEffort
+import io.github.mangi.eta.agent.question.AgentQuestionAnswer
 
 sealed interface AgentHomeAction {
     data class ContextTaskSelected(val taskId: String?) : AgentHomeAction
     data class ReasoningEffortChanged(val effort: ReasoningEffort) : AgentHomeAction
     data class ModelSelected(val modelId: String, val providerId: String = "") : AgentHomeAction
+
+    /**
+     * 循环切换 GPT 速度档位（NORMAL → FAST → ULTRA_FAST → NORMAL）。
+     * 临时真值由 AppState 路持有，不持久化，UI 只负责派发，不本地假切状态。
+     */
+    data object CycleGptSpeedMode : AgentHomeAction
     data class SubmitMessage(val text: String) : AgentHomeAction
     data object StopRun : AgentHomeAction
     data object ContinueRun : AgentHomeAction
@@ -23,6 +30,8 @@ sealed interface AgentHomeAction {
     data class DeleteMessage(val id: String) : AgentHomeAction
     data class RegenerateMessage(val id: String) : AgentHomeAction
     data class BranchMessage(val id: String) : AgentHomeAction
+    data class QuestionDraftChanged(val conversationId: String, val questionId: String, val answer: AgentQuestionAnswer) : AgentHomeAction
+    data class SubmitQuestionAnswer(val conversationId: String, val questionId: String) : AgentHomeAction
     data object OpenTools : AgentHomeAction
     data object OpenSkills : AgentHomeAction
     data object OpenPermissions : AgentHomeAction
@@ -43,6 +52,9 @@ sealed interface AgentChatAction {
     data object NavigateBack : AgentChatAction
     data class ReasoningEffortChanged(val effort: ReasoningEffort) : AgentChatAction
     data class ModelSelected(val modelId: String, val providerId: String = "") : AgentChatAction
+
+    /** 循环切换 GPT 速度档位；真值由 AppState 路持有，UI 仅派发。 */
+    data object CycleGptSpeedMode : AgentChatAction
     data class SubmitMessage(val text: String) : AgentChatAction
     data object StopRun : AgentChatAction
     data object ContinueRun : AgentChatAction
@@ -62,6 +74,8 @@ sealed interface AgentChatAction {
     data class DeleteMessage(val id: String) : AgentChatAction
     data class RegenerateMessage(val id: String) : AgentChatAction
     data class BranchMessage(val id: String) : AgentChatAction
+    data class QuestionDraftChanged(val conversationId: String, val questionId: String, val answer: AgentQuestionAnswer) : AgentChatAction
+    data class SubmitQuestionAnswer(val conversationId: String, val questionId: String) : AgentChatAction
 }
 
 sealed interface AgentToolsAction {

@@ -27,7 +27,7 @@ internal object AgentHttpClient {
             .writeTimeout(WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
-            .retryOnConnectionFailure(true)
+            .retryOnConnectionFailure(false)
             .addInterceptor(ProviderRequestInterceptor)
             .addNetworkInterceptor(JsonContentTypeInterceptor)
             .addNetworkInterceptor(SseContentTypeInterceptor)

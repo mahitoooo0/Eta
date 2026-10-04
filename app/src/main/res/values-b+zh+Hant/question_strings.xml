@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="question_heading">需要你回答</string>
+    <string name="question_other">其他…</string>
+    <string name="question_other_hint">填寫你的選擇</string>
+    <string name="question_delegate">你看著辦</string>
+    <string name="question_delegate_hint">僅把當前問題交給代魚決定，不擴大操作權限</string>
+    <string name="question_note">補充說明（選填）</string>
+    <string name="question_submit">提交回答</string>
+    <string name="question_submitting">正在提交…</string>
+    <string name="question_answered">已回答</string>
+    <string name="question_cancelled">提問已取消</string>
+    <string name="question_interrupted">提問已中斷</string>
+    <string name="question_waiting">等待你回答</string>
+    <string name="question_recommended">推薦</string>
+</resources>

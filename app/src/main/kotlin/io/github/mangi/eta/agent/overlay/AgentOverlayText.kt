@@ -30,6 +30,7 @@ internal sealed interface AgentOverlayStatus {
     data object RunFailed : AgentOverlayStatus
     data object GeneratingAnswer : AgentOverlayStatus
     data object Stopping : AgentOverlayStatus
+    data object WaitingForAnswer : AgentOverlayStatus
     data object Paused : AgentOverlayStatus
     data object Continuing : AgentOverlayStatus
     data object Finishing : AgentOverlayStatus
@@ -70,6 +71,7 @@ internal fun AgentOverlayStatus.localizedText(): String = when (this) {
     AgentOverlayStatus.RunFailed -> stringResource(R.string.overlay_run_failed)
     AgentOverlayStatus.GeneratingAnswer -> stringResource(R.string.overlay_generating_answer)
     AgentOverlayStatus.Stopping -> stringResource(R.string.overlay_stopping)
+    AgentOverlayStatus.WaitingForAnswer -> stringResource(R.string.question_waiting)
     AgentOverlayStatus.Paused -> stringResource(R.string.overlay_paused)
     AgentOverlayStatus.Continuing -> stringResource(R.string.overlay_continuing)
     AgentOverlayStatus.Finishing -> stringResource(R.string.overlay_finishing)

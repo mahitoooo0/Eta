@@ -23,12 +23,17 @@ class ResponsesEnvelopeIntegrationTest {
         .put("status", "completed").put("output", JSONArray().put(JSONObject()
             .put("type", "message").put("id", "m").put("role", "assistant")
             .put("content", JSONArray().put(JSONObject().put("type", "output_text").put("text", "done")))))))
-    private fun request(url: String) = ProviderRequest(AgentModelClient.ModelConfig(
+    private fun request(url: String, errorReconnectPolicy: String = "none") = ProviderRequest(AgentModelClient.ModelConfig(
         baseUrl = url, apiKey = "test", model = "test", systemPrompt = "original instructions",
         openAiEndpointMode = OpenAiEndpointMode.RESPONSES, browserTools = false,
+        errorReconnectPolicy = errorReconnectPolicy,
     ), JSONArray(), JSONArray())
-    private fun run(url: String, callback: (Int, ProviderEvent) -> Unit = { _, _ -> }) = AgentModelRetry { _, _ -> }.complete(
-        1, request(url), OpenAiResponsesProvider, AgentRunController(), {}, callback, {},
+    private fun run(
+        url: String,
+        errorReconnectPolicy: String = "none",
+        callback: (Int, ProviderEvent) -> Unit = { _, _ -> },
+    ) = AgentModelRetry { _, _ -> }.complete(
+        1, request(url, errorReconnectPolicy), OpenAiResponsesProvider, AgentRunController(), {}, callback, {},
     )
     @Test fun httpAndFlattenedSseRejectionsRegenerateOnce() {
         for (http in listOf(true, false)) {
@@ -123,7 +128,7 @@ class ResponsesEnvelopeIntegrationTest {
     @Test fun correctedRequestsIncludingTransientFailuresAreBounded() {
         server({ n -> if (n == 2) 503 to "temporary" else
             500 to JSONObject().put("error", error()).toString() }) { url, calls ->
-            assertThrows(AgentModelFailure::class.java) { run(url) }
+            assertThrows(AgentModelFailure::class.java) { run(url, errorReconnectPolicy = "30s") }
             assertEquals(3, calls.get())
         }
     }

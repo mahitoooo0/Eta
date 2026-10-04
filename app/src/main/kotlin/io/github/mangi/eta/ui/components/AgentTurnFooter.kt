@@ -57,6 +57,7 @@ internal fun AgentTurnFooter(
             if (message.isStreaming || message.content.isBlank()) return
             message.content
         }
+        is io.github.mangi.eta.ui.model.ErrorReconnectMessageUi -> errorReconnectLabel(message)
         is SystemNoticeMessageUi -> {
             val label = stringResource(when (message.code) {
                 SystemNoticeCode.Stopped -> R.string.system_notice_stopped
@@ -66,7 +67,8 @@ internal fun AgentTurnFooter(
                 SystemNoticeCode.Interrupted -> R.string.system_notice_interrupted
                 SystemNoticeCode.Completed -> R.string.system_notice_completed
             })
-            listOfNotNull(label, message.detail?.takeIf(String::isNotBlank)).joinToString("\n\n")
+            if (message.code == SystemNoticeCode.RuntimeFailed) label
+            else listOfNotNull(label, message.detail?.takeIf(String::isNotBlank)).joinToString("\n\n")
         }
         else -> return
     }

@@ -37,6 +37,11 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import io.github.mangi.eta.agent.accessibility.AgentAccessibilityService
 import io.github.mangi.eta.agent.media.AgentImageCodec
 import io.github.mangi.eta.agent.model.AgentModelClient
+import io.github.mangi.eta.agent.question.AgentQuestionAnswer
+import io.github.mangi.eta.agent.question.AgentQuestionCodec
+import io.github.mangi.eta.agent.question.AgentQuestionStatus
+import io.github.mangi.eta.ui.model.AgentQuestionMessageUi
+import io.github.mangi.eta.ui.app.AgentQuestionProjection
 import io.github.mangi.eta.agent.overlay.AgentOverlayVisibilityPolicy
 import io.github.mangi.eta.agent.runtime.AgentEvent
 import io.github.mangi.eta.agent.runtime.AgentExternalArchivePayload
@@ -275,6 +280,8 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                             },
                         exitRequested = handoffExitRequested,
                         onOpenConversation = ::openConversation,
+                        onQuestionDraftChanged = ::updateQuestionDraft,
+                        onSubmitQuestionAnswer = ::submitQuestionAnswer,
                     )
                 }
             }
@@ -428,7 +435,7 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                 } else {
                     uiState = uiState.copy(
                         phase = EtaVoicePhase.ERROR,
-                        status = EtaVoiceStatus.Failed(result.error),
+                        status = EtaVoiceStatus.Failed(null),
                         messages = finishRunMessages(runId, result),
                     )
                 }
@@ -445,6 +452,57 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                         stopSelf()
                     }
                 }
+            }
+        }
+    }
+
+    private fun updateQuestionDraft(conversationId: String, questionId: String, draft: AgentQuestionAnswer) {
+        val question = uiState.messages.filterIsInstance<AgentQuestionMessageUi>().singleOrNull {
+            it.request.conversationId == conversationId && it.request.questionId == questionId
+        } ?: return
+        if (question.request.runId != activeRunId || question.status != AgentQuestionStatus.Waiting || question.submitting) return
+        val kind = when {
+            draft.kind == "option" -> "option"
+            draft.kind == "other" && question.request.allowOther -> "other"
+            draft.kind == "delegate" && question.request.allowDelegation -> "delegate"
+            else -> return
+        }
+        val updated = question.copy(answerKind = kind,
+            selectedOptionId = draft.optionId?.takeIf { id -> question.request.options.any { it.id == id } },
+            otherText = draft.otherText.take(2000), note = if (question.request.allowNote) draft.note.take(2000) else "", error = null)
+        uiState = uiState.copy(messages = uiState.messages.map { if (it.id == question.id) updated else it })
+    }
+
+    private fun submitQuestionAnswer(conversationId: String, questionId: String) {
+        val question = uiState.messages.filterIsInstance<AgentQuestionMessageUi>().singleOrNull {
+            it.request.conversationId == conversationId && it.request.questionId == questionId
+        } ?: return
+        if (question.request.runId != activeRunId || question.status != AgentQuestionStatus.Waiting || question.submitting) return
+        val answer = AgentQuestionProjection.draftAnswer(question)
+        val validation = AgentQuestionCodec.validateAnswer(question.request, answer)
+        if (!validation.accepted) {
+            uiState = uiState.copy(messages = uiState.messages.map {
+                if (it.id == question.id) question.copy(error = validation.message.ifBlank { validation.code }) else it
+            })
+            return
+        }
+        uiState = uiState.copy(messages = uiState.messages.map {
+            if (it.id == question.id) question.copy(submitting = true, error = null) else it
+        })
+        scope.launch(Dispatchers.Main.immediate) {
+            val owner = question.request
+            val receipt = withContext(Dispatchers.IO) { runtimeClient.submitQuestionAnswer(
+                owner.conversationId, owner.runId, owner.questionId, owner.toolCallId, answer) }
+            uiState = uiState.copy(messages = uiState.messages.map { m -> if (m is AgentQuestionMessageUi &&
+                AgentQuestionProjection.sameOwner(m.request, owner)) AgentQuestionProjection.acknowledged(m, answer, receipt) else m })
+            if (receipt.accepted) kotlinx.coroutines.delay(1_000)
+            // Terminal projection can close the card before the ACK; still query its exact
+            // owner once unless already Answered. The read corrects missed answers, not liveness.
+            if (AgentQuestionProjection.needsAuthoritativeQuery(uiState.messages, owner)) {
+                val snapshot = withContext(Dispatchers.IO) { runtimeClient.queryQuestion(owner.conversationId,
+                    owner.runId, owner.questionId, owner.toolCallId) }
+                uiState = uiState.copy(messages = AgentQuestionProjection.reconcileMessages(
+                    uiState.messages, owner, snapshot))
             }
         }
     }
@@ -468,6 +526,18 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
         var status = state.status
         var phase = state.phase
         when (event) {
+            is AgentEvent.QuestionRequested -> {
+                messages = runMessageProjector.requestQuestion(event.request.conversationId, runId, event, messages)
+                status = EtaVoiceStatus.WaitingForAnswer
+                updateSoftInput(visible = true)
+            }
+            is AgentEvent.QuestionResolved -> {
+                val owner = messages.filterIsInstance<AgentQuestionMessageUi>().singleOrNull {
+                    it.request.runId == runId && it.request.questionId == event.questionId
+                }?.request?.conversationId
+                if (owner != null) messages = runMessageProjector.resolveQuestion(owner, runId, event, messages)
+                status = EtaVoiceStatus.Reasoning
+            }
             is AgentEvent.AssistantBlockStart -> {
                 messages = runMessageProjector.startAssistantBlock(runId, event, messages)
             }
@@ -585,16 +655,18 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                 messages = runMessageProjector.finishHostedTool(runId, event, messages)
             }
 
+            is AgentEvent.ErrorReconnectChanged -> {
+                messages = runMessageProjector.reconnectChanged(runId, event, messages)
+                status = EtaVoiceStatus.Reasoning
+            }
+
             is AgentEvent.RunFailed -> {
                 phase = EtaVoicePhase.ERROR
-                status = EtaVoiceStatus.Failed(event.reason)
-                messages = runMessageProjector.failRunningTools(
-                    event.reason,
-                    runMessageProjector.finalizeText(
-                        runId,
-                        runMessageProjector.finalizeThinking(runId, messages),
-                    ),
-                )
+                status = EtaVoiceStatus.Failed(null)
+                messages = runMessageProjector.terminalFailure(runId, event.reason,
+                    runMessageProjector.failRunningTools(event.reason,
+                        runMessageProjector.finalizeText(runId,
+                            runMessageProjector.finalizeThinking(runId, messages))))
             }
 
             is AgentEvent.AssistantReceived -> {
@@ -647,6 +719,15 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                 messages,
             )
         }
+        if (!result.ok) {
+            messages = if (result.error == LEGACY_STOPPED_ERROR) {
+                runMessageProjector.runStopped(runId, messages) +
+                    SystemNoticeMessageUi("interrupted-$runId", SystemNoticeCode.Stopped)
+            } else runMessageProjector.terminalFailure(runId,
+                result.error ?: SYNTHETIC_RUNTIME_FAILED, messages)
+            runMessageProjector.clearRun(runId)
+            return messages
+        }
         val notice = when {
             result.ok && result.content.isBlank() -> SystemNoticeCode.EmptyResult
             !result.ok && result.error == LEGACY_STOPPED_ERROR -> SystemNoticeCode.Stopped
@@ -654,6 +735,7 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
             else -> null
         }
         val lastAssistantIndex = AgentRunMessageProjector.resultTargetIndex(runId, messages)
+        val resultTail = AgentRunMessageProjector.completedResultTail(runId, messages, lastAssistantIndex, result.content)
         messages = if (lastAssistantIndex >= 0) {
             val targetRound = (messages[lastAssistantIndex] as AgentMessageUi).id
                 .assistantRound(runId)
@@ -667,9 +749,9 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                     if (notice == null) {
                         message.copy(
                             content = if (sameRoundBlocks <= 1) {
-                                result.content
+                                resultTail
                             } else {
-                                message.content.ifBlank { result.content }
+                                message.content.ifBlank { resultTail }
                             },
                             isStreaming = false,
                             renderMarkdown = true,
@@ -689,7 +771,7 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
             if (notice == null) {
                 messages + AgentMessageUi(
                     id = AgentRunMessageProjector.resultFallbackId(runId, messages),
-                    content = result.content,
+                    content = resultTail,
                     isStreaming = false,
                     renderMarkdown = true,
                 )
@@ -701,6 +783,7 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
                 )
             }
         }
+        messages = runMessageProjector.finalizeRun(runId, messages)
         runMessageProjector.clearRun(runId)
         return messages
     }
@@ -723,14 +806,10 @@ internal class EtaAssistantOverlayService : Service(), LifecycleOwner, SavedStat
             uiState = uiState.copy(
                 phase = EtaVoicePhase.READY,
                 status = EtaVoiceStatus.Stopped,
-                messages = runMessageProjector.failRunningTools(
-                    SYNTHETIC_STOPPED,
-                    runMessageProjector.finalizeText(
-                        runId,
-                        runMessageProjector.finalizeThinking(runId, uiState.messages),
-                    ),
-                ),
+                messages = runMessageProjector.runStopped(runId,
+                    runMessageProjector.failRunningTools(SYNTHETIC_STOPPED, uiState.messages)),
             )
+            uiState = uiState.copy(messages = runMessageProjector.finalizeRun(runId, uiState.messages))
             runMessageProjector.clearRun(runId)
             updateSoftInput(visible = true)
             inputFocusRequestKey++

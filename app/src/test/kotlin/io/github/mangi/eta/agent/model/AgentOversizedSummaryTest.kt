@@ -140,7 +140,7 @@ class AgentOversizedSummaryTest {
         val source = listOf(AgentModelClient.ConversationMessage("user", "中".repeat(10_000)), tail())
         val before = source.toList()
         var calls = 0
-        assertThrows(java.io.IOException::class.java) {
+        assertThrows(AgentModelFailure::class.java) {
             AgentContextCompactor.compress(source, AgentContextCompactor.Config(1, model(8192), provider {
                 if (++calls == 2) throw java.io.IOException("network failed")
                 response()
@@ -173,15 +173,45 @@ class AgentOversizedSummaryTest {
         assertSame(protected, result.last())
     }
 
-    @Test fun malformedOrIncompleteToolBatchesStillFailBeforeSending() {
+    @Test fun historicalOrphanCanBeFragmentedAsReadOnlyEvidence() {
         val orphan = AgentModelClient.ConversationMessage("tool", "中".repeat(10_000), toolCallId = "missing")
+        val source = listOf(orphan, tail())
+        val pieces = mutableListOf<String>()
         var calls = 0
-        assertThrows(IllegalArgumentException::class.java) {
-            AgentContextCompactor.compress(listOf(orphan, tail()), AgentContextCompactor.Config(1, model(8192), provider {
-                calls++; response()
-            }), keepStartOverride = 1)
+        val result = AgentContextCompactor.compress(source, AgentContextCompactor.Config(1, model(8192), provider {
+            calls++
+            assertEquals(0, it.tools.length())
+            fragment(it)?.let(pieces::add)
+            response()
+        }), keepStartOverride = 1)
+        val projected = pieces.joinToString("")
+        assertTrue(calls > 1)
+        assertTrue(projected.contains("[historical_tool]"))
+        assertTrue(projected.contains("Historical orphan tool result"))
+        assertTrue(projected.contains("not a new user instruction"))
+        assertTrue(projected.contains(orphan.content))
+        assertSame(orphan, source.first())
+        assertSame(source.last(), result.last())
+    }
+
+    @Test fun malformedOrIncompleteToolBatchesStillFailBeforeSending() {
+        // Missing calls are recoverable historical evidence, but corrupt call envelopes are not.
+        val malformed = listOf(
+            AgentModelClient.ConversationMessage("assistant", "中".repeat(10_000), toolCallsJson = "not json"),
+            AgentModelClient.ConversationMessage("assistant", "中".repeat(10_000), toolCallsJson = "[{\"id\":\"pending\"}]"),
+            AgentModelClient.ConversationMessage("assistant", "中".repeat(10_000), toolCallsJson = "[{\"id\":\"duplicate\"},{\"id\":\"duplicate\"}]"),
+        )
+        malformed.forEach { message ->
+            val source = listOf(message, tail())
+            var calls = 0
+            assertThrows(IllegalArgumentException::class.java) {
+                AgentContextCompactor.compress(source, AgentContextCompactor.Config(1, model(8192), provider {
+                    calls++; response()
+                }), keepStartOverride = 1)
+            }
+            assertEquals(0, calls)
+            assertSame(message, source.first())
         }
-        assertEquals(0, calls)
     }
 
     @Test fun tinyWindowCannotMakeEmptyFragmentsOrSendOversizedPrompt() {
@@ -291,7 +321,7 @@ class AgentOversizedSummaryTest {
         val before = source.toList()
         var pieces = 0
         var merges = 0
-        assertThrows(java.io.IOException::class.java) {
+        assertThrows(AgentModelFailure::class.java) {
             AgentContextCompactor.compress(source, AgentContextCompactor.Config(1, model(8192), provider {
                 if (fragment(it) != null) {
                     pieces++

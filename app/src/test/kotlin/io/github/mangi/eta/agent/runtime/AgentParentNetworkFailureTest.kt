@@ -6,6 +6,23 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentParentNetworkFailureTest {
+    @Test fun reconnectDeadlinePreservesOriginalChildDecisionFlow() {
+        val deadline = AgentModelFailure("ERROR_RECONNECT_DEADLINE", false, "deadline",
+            AgentModelFailure("HTTP_401", false, "authentication"))
+        assertTrue(AgentParentNetworkFailure.isFinal(deadline, cancelled = false))
+        assertFalse(AgentParentNetworkFailure.isFinal(deadline, cancelled = true))
+    }
+
+    @Test fun guardedNetworkFailureStillOffersChildDecisionWithoutReplayingTools() {
+        val guarded = AgentModelFailure("UNSAFE_TOOL_REPLAY", false, "protected",
+            AgentModelFailure("STREAM_INCOMPLETE", true, "connection lost"))
+        assertTrue(AgentParentNetworkFailure.isFinal(guarded, cancelled = false))
+        assertFalse(AgentParentNetworkFailure.isFinal(guarded, cancelled = true))
+        val permanent = AgentModelFailure("UNSAFE_TOOL_REPLAY", false, "protected",
+            AgentModelFailure("HTTP_401", false, "authentication"))
+        assertFalse(AgentParentNetworkFailure.isFinal(permanent, cancelled = false))
+    }
+
     @Test fun exhaustedRetryWrapperIsFinalNetworkFailure() {
         val connection = AgentModelFailure("MODEL_CONNECTION_FAILED", true, "connection")
         val exhausted = AgentModelFailure(connection.code, false, "exhausted", connection)

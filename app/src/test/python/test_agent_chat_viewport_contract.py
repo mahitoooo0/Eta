@@ -44,9 +44,6 @@ class AgentChatViewportContractTest(unittest.TestCase):
         cls.source = code_only((
             cls.app / "src/main/kotlin/io/github/mangi/eta/ui/components/AgentChatBody.kt"
         ).read_text(encoding="utf-8"))
-        cls.follow_source = code_only((
-            cls.app / "src/main/kotlin/io/github/mangi/eta/ui/components/BottomFollowViewportStep.kt"
-        ).read_text(encoding="utf-8"))
         declaration = re.search(
             r"\bfun\s+AgentConversationMessages\s*\(", cls.source
         )
@@ -91,45 +88,16 @@ class AgentChatViewportContractTest(unittest.TestCase):
         self.assertRegex(head, r"\.clipToBounds\s*\(\s*\)")
 
     def test_following_output_lifts_the_tail_instead_of_clipping_it(self):
-        # Overflow is read by the placement-stage layer after child measurement,
-        # rather than by a composition-time graphicsLayer parameter callback.
+        # While following streamed output, the tail is lifted to the 14dp line and
+        # also clipped there. Fast output can draw a new line past the measured
+        # tail before the lift catches it; the clip keeps that line out of the composer.
         lists = list(calls(self.messages, "LazyColumn"))
-        self.assertEqual(len(lists), 1)
-        lifts = list(calls(lists[0], "bottomFollowLayer"))
-        self.assertEqual(len(lifts), 1)
-        self.assertRegex(lifts[0], r"\bshouldLift\s*=\s*shouldLiftTail\b")
-        self.assertRegex(lifts[0], r"\bheldLiftPx\s*=\s*heldTailLift\b")
         self.assertRegex(
             lists[0],
-            r"\.bottomFollowLayer\s*\([^)]*\)\s*"
-            r"\{\s*scrollState\.followTailOverflow\(\)\s*\}",
+            r"val overflow = scrollState\.followTailOverflow\(\)",
         )
-        declaration = re.search(
-            r"fun\s+Modifier\.bottomFollowLayer\s*\(", self.follow_source
-        )
-        self.assertIsNotNone(declaration)
-        start = self.follow_source.index("(", declaration.start())
-        end = balanced_end(self.follow_source, start, "(", ")")
-        self.assertRegex(
-            self.follow_source[end + 1:],
-            r"^\s*:\s*Modifier\s*=\s*layout\s*\{",
-        )
-        body_start = self.follow_source.index("{", end)
-        body_end = balanced_end(self.follow_source, body_start, "{", "}")
-        helper = self.follow_source[body_start + 1:body_end]
-        self.assertRegex(helper, r"measurable\.measure\(constraints\)")
-        self.assertRegex(helper, r"layout\(placeable\.width,\s*placeable\.height\)")
-        self.assertRegex(helper, r"nextHeldTailLift\(")
-        self.assertRegex(helper, r"overflowPx\(\)")
-        self.assertRegex(helper, r"heldPx\s*=\s*heldLiftPx\[0\]")
-        self.assertRegex(helper, r"heldLiftPx\[0\]\s*=\s*lift\b")
-        self.assertRegex(
-            helper,
-            r"placeable\.placeWithLayer\(0,\s*0\)\s*\{\s*"
-            r"translationY\s*=\s*-lift\.toFloat\(\)",
-        )
-        # Preserve the fixed outer clip: translating content must never let a
-        # retained child layer draw into the measured composer area.
+        self.assertRegex(lists[0], r"nextHeldTailLift\(")
+        self.assertLess(lists[0].index('followTailOverflow()'), lists[0].index('nextHeldTailLift('))
         boxes = [
             call for call in calls(self.messages, "Box")
             if re.search(r"\bmodifier\s*=\s*modifier\b", call)

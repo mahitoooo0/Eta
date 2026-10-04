@@ -68,20 +68,41 @@ internal class AgentChatImageCache(context: Context) {
         if (!source.isDirectory) return
         val target = File(root, sanitize(toId))
         if (target.exists()) target.deleteRecursively()
-        source.copyRecursively(target, overwrite = true)
+        check(source.copyRecursively(target, overwrite = true)) { "分支附件复制失败" }
+        if (Thread.currentThread().isInterrupted) throw InterruptedException("分支附件复制已取消")
     }
 
     fun rewriteCachedPath(value: String, fromId: String, toId: String): String {
         if (value.isEmpty() || fromId == toId) return value
-        val fromDir = File(root, sanitize(fromId)).absolutePath
-        val toDir = File(root, sanitize(toId)).absolutePath
-        val replaced = value.replace(fromDir, toDir)
-        if (replaced != value) return replaced
-        // History often stores the same cache file with another absolute root
-        // (/data/data vs /data/user/0). The conversation directory is stable.
-        val fromSegment = "/$CACHE_DIRECTORY/${sanitize(fromId)}/"
-        val toSegment = "/$CACHE_DIRECTORY/${sanitize(toId)}/"
-        return value.replace(fromSegment, toSegment)
+        val scheme = if (value.startsWith("file:///")) "file://" else ""
+        val raw = value.removePrefix(scheme)
+        if (!raw.startsWith('/') || raw.any { it.isISOControl() } || '\\' in raw) return value
+        // Do not normalize traversal into ownership of another conversation (or accept prose).
+        if (raw.split('/').any { it == "." || it == ".." }) return value
+        val source = File(root, sanitize(fromId))
+        val target = File(root, sanitize(toId))
+        val bases = mutableListOf(source.absolutePath)
+        // Only this application's data-root alias, not arbitrary matching cache-directory segments.
+        val rootSuffix = "/$packageName/cache/$CACHE_DIRECTORY"
+        if (root.absolutePath.endsWith(rootSuffix)) {
+            val dataRoot = root.absolutePath.removeSuffix(rootSuffix)
+            // /data/data is user 0's alias, never another Android profile's cache.
+            if (dataRoot == "/data/user/0" || dataRoot == "/data/data") {
+                bases += "/data/data$rootSuffix/${sanitize(fromId)}"
+                bases += "/data/user/0$rootSuffix/${sanitize(fromId)}"
+            }
+        }
+        val base = bases.firstOrNull { raw.startsWith("$it/") } ?: return value
+        val relative = raw.removePrefix("$base/")
+        if (relative.isEmpty() || relative.split('/').any { it.isEmpty() }) return value
+        return runCatching {
+            // Also reject existing symlink escapes. No file must exist for a valid historical slot.
+            if (source.canonicalFile != File(root.canonicalFile, sanitize(fromId)) ||
+                target.canonicalFile != File(root.canonicalFile, sanitize(toId)) ||
+                !File(source, relative).canonicalPath.startsWith(source.canonicalPath + "/") ||
+                !File(target, relative).canonicalPath.startsWith(target.canonicalPath + "/")) value
+            else scheme + File(target, relative).absolutePath
+        }.getOrDefault(value)
     }
 
     fun deleteConversation(conversationId: String) {

@@ -26,6 +26,7 @@ internal object AgentToolRequirements {
         }
         register(
             RootRequirement.NONE,
+            "ask_user",
             "get_current_context", "search_apps", "launch_app", "keep_virtual_result", "open_uri", "browser_use", "text_to_speech",
             "observe_screen", "tap", "tap_area", "tap_element", "long_press",
             "long_press_element", "swipe", "scroll", "scroll_element", "input_text",

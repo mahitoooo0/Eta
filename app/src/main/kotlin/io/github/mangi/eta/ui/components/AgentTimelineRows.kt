@@ -22,6 +22,7 @@ internal sealed interface AgentTimelineRow {
         val message: AgentChatMessageUi,
         val isFirst: Boolean,
         val isLast: Boolean,
+        val expanded: Boolean = true,
     ) : AgentTimelineRow {
         override val key: String get() = "work-step:${message.id}"
     }
@@ -30,6 +31,7 @@ internal sealed interface AgentTimelineRow {
 internal fun List<AgentTimelineEntry>.toLazyTimelineRows(
     expandedOverrides: Map<String, Boolean>,
     isStreaming: Boolean,
+    retainedSteps: Map<String, Set<String>> = emptyMap(),
 ): List<AgentTimelineRow> = buildList {
     val trailingWorkKey = (this@toLazyTimelineRows.lastOrNull() as? AgentTimelineEntry.WorkProcess)?.key
     this@toLazyTimelineRows.forEach { entry ->
@@ -42,9 +44,16 @@ internal fun List<AgentTimelineEntry>.toLazyTimelineRows(
                 }
                 val expanded = expandedOverrides[entry.key] ?: (running || (isStreaming && entry.key == trailingWorkKey))
                 add(AgentTimelineRow.WorkHeader(entry, expanded))
-                if (expanded) entry.messages.forEachIndexed { index, message ->
+                // During exit only retained rows are projected. A newly appended
+                // hidden step (or a deleted old tail) must not steal the card bottom.
+                val projectedMessages = if (expanded) entry.messages else entry.messages.filter { message ->
+                    "work-step:${message.id}" in retainedSteps[entry.key].orEmpty()
+                }
+                projectedMessages.forEachIndexed { index, message ->
                     add(AgentTimelineRow.WorkStep(entry.key, message,
-                        isFirst = index == 0, isLast = index == entry.messages.lastIndex))
+                        isFirst = message.id == entry.messages.firstOrNull()?.id,
+                        isLast = index == projectedMessages.lastIndex,
+                        expanded = expanded))
                 }
             }
         }

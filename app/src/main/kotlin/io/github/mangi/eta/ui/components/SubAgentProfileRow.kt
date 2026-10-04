@@ -70,7 +70,8 @@ internal fun SubAgentProfileRow(profile: SubAgentProfile, providers: List<Provid
                 ?: if (profile.modelId.isBlank()) "选择模型" else "模型不可用",
                 Icons.Rounded.ViewInAr, "${profile.name}模型", enabled = usable, badge = config?.providerName,
                 onClick = { if (currentUsable) { TouchHaptics.click(view); modelPicker = true } },
-                onLongClick = { if (currentUsable && canThink) { TouchHaptics.longPress(view); thinkingPicker = true } })
+                onLongClick = { if (currentUsable && canThink) { TouchHaptics.longPress(view); thinkingPicker = true } },
+                trailing = { SubAgentGptSpeedButton(profile, providers, usable) })
             Box(Modifier.fillMaxWidth()) {
                 SubAgentSettingRow("职责", profile.roleLabel, Icons.Rounded.Assignment,
                     "选择${profile.name}职责", enabled = usable, dropdown = true,
@@ -131,6 +132,7 @@ internal fun SubAgentProfileRow(profile: SubAgentProfile, providers: List<Provid
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                SubAgentGptSpeedButton(profile, providers, usable)
                 if (profile.supportsTaskTier) SubAgentTaskTierButton(profile.name, profile.tier, usable,
                     { tier -> if (currentUsable) editor?.updateProfile(profile.id) { it.copy(tier = tier) } }, compact = true)
                 else IconButton(enabled = usable, onClick = { if (currentUsable) { TouchHaptics.click(view); modelPicker = true } }) {

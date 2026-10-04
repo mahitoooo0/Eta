@@ -96,6 +96,7 @@ internal object OpenAiChatCompletionsProvider : AgentProviderClient {
                 }
                 mergeExtraBody(request, config.extraBodyJson)
                 RequestBodyMerge.mergeCustomBody(request, config.customBody)
+                GptServiceTier.apply(request, config)
                 request.remove("eta_media_reasoning")
                 request.remove(ImageRequestParameters.CONFIG_KEY) // Local image settings never enter text protocols.
                 ProviderReasoning.applyOpenAiCompatibleRequest(request, config)

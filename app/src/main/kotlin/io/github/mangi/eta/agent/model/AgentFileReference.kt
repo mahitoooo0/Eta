@@ -114,6 +114,32 @@ internal object AgentFileReferencePromptCodec {
         }.getOrElse { salvageEnvelope(content) }
     }
 
+    /** Relocate only validated file-reference slots, leaving request/conversations byte-for-byte intact.
+     * Parsing can salvage malformed envelopes for display; that is NOT permission to reformat them.
+     */
+    fun rewriteReferencePaths(content: String, rewrite: (String) -> String): String {
+        val prefix = "$FILES_HEADER\n\n"
+        if (!content.startsWith(prefix) || content.length > MAX_ENVELOPE_CHARS) return content
+        val parsed = parse(content)
+        if (parsed.references.isEmpty()) return content
+        val requestEnd = content.indexOf("\n\n$REQUEST_HEADER", prefix.length)
+        val conversationsEnd = content.indexOf("\n\n$CONVERSATIONS_HEADER\n", prefix.length)
+        val end = if (conversationsEnd >= 0 && parsed.conversations.isNotEmpty()) conversationsEnd else requestEnd
+        if (end < prefix.length) return content
+        val entries = content.substring(prefix.length, end).split("\n\n")
+        val references = entries.map { parseReference(it) ?: return content }
+        var changed = false
+        val relocated = entries.zip(references).map { (entry, reference) ->
+            val path = rewrite(reference.absolutePath)
+            if (path == reference.absolutePath || !path.startsWith('/') || path.hasUnsupportedControlCharacter()) entry
+            else {
+                changed = true
+                entry.dropLast(reference.absolutePath.length) + path
+            }
+        }
+        return if (changed) prefix + relocated.joinToString("\n\n") + content.substring(end) else content
+    }
+
     /** UI/copy/title must never fall back to the model-only envelope. */
     fun visibleRequest(content: String): String = parse(content).request
 

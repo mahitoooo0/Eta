@@ -51,6 +51,9 @@ internal interface ConversationDao {
         "AND type IN ('user', 'assistant', 'thinking', 'tool') ORDER BY sort_index ASC LIMIT :limit OFFSET :offset")
     suspend fun searchablePage(id: String, limit: Int, offset: Int): List<ConversationTextRow>
 
+    @Query("SELECT DISTINCT conversation_id FROM conversation_messages WHERE type = 'question'")
+    suspend fun questionConversationIds(): List<String>
+
     @Query("SELECT * FROM conversation_messages ORDER BY conversation_id ASC, sort_index ASC")
     suspend fun messages(): List<ConversationMessageEntity>
 

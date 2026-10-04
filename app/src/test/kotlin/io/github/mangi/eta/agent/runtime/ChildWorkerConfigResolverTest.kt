@@ -32,6 +32,13 @@ class ChildWorkerConfigResolverTest {
     ) = ChildWorkerConfigResolver.resolveWorker(owner, config, selected.id, selected.role,
         providerLookup = { id -> source.takeIf { it.id == id } }, modelResolver = build)
 
+    @Test fun childSnapshotInheritsParentsUnifiedReconnectPolicy() = runBlocking {
+        val parent = model(profile).copy(errorReconnectPolicy = "continuous")
+        val result = ChildWorkerConfigResolver.resolveWorker(owner, ConversationSubAgentConfig(listOf(profile)),
+            profile.id, profile.role, providerLookup = { provider }, modelResolver = { model(it) }, parentConfig = parent)
+        assertEquals("continuous", result.configuration?.model?.errorReconnectPolicy)
+    }
+
     @Test fun selectedModelResolvedExactlyAndNeverReplacedByFirstModel() = runBlocking {
         val selected = profile.copy(modelId = "selection-new")
         val result = resolve(selected)

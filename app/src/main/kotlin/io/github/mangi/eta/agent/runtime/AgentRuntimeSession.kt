@@ -1,6 +1,13 @@
 package io.github.mangi.eta.agent.runtime
 
 
+import io.github.mangi.eta.agent.question.AgentQuestionCoordinator
+import io.github.mangi.eta.agent.question.AgentQuestionLedger
+import io.github.mangi.eta.agent.question.AgentQuestionSnapshot
+import io.github.mangi.eta.agent.question.AgentQuestionStateIndex
+import io.github.mangi.eta.agent.question.AgentQuestionInterruptedException
+import java.util.UUID
+import io.github.mangi.eta.agent.question.AgentQuestionReceipt
 import io.github.mangi.eta.agent.device.AgentTaskSurface
 import io.github.mangi.eta.agent.device.AgentTaskSurfaceMode
 import io.github.mangi.eta.core.AndroidAgentLogger
@@ -22,6 +29,10 @@ internal class AgentRuntimeSession(
     // Freeze once for both execution and presentation, including late terminal callbacks.
     taskSurfaceMode: AgentTaskSurfaceMode =
         runCatching { AgentTaskSurface.stored() }.getOrDefault(AgentTaskSurfaceMode.ASK),
+    private val questionLedger: AgentQuestionLedger? = null,
+    val questionOwnerGeneration: String = UUID.randomUUID().toString(),
+    // Android queues Main's terminal work; plain JVM sessions retain synchronous semantics.
+    private val terminalWork: ((() -> Unit) -> Unit) = { it() },
 ) {
     /** “每次询问”在用户选定后改成前台或后台一次，之后不再变。 */
     @Volatile
@@ -44,7 +55,14 @@ internal class AgentRuntimeSession(
     }
 
     private val lock = ReentrantLock()
-    private var state = State.RUNNING
+    @Volatile private var state = State.RUNNING
+    @Volatile private var stopSignalled = false
+    @Volatile private var questionEvidenceFailed = false
+    private val questionIndex = AgentQuestionStateIndex(runId)
+    private val questionAdmission = ReentrantLock()
+    private var admittedQuestions = 0
+    private val questionsFinished = lock.newCondition()
+    private var terminalAfterQuestions: (() -> Unit)? = null
     private val replayEvents = mutableListOf<AgentEvent>()
     private val subscribers = mutableListOf<Subscriber>()
     private val afterUnlock = mutableListOf<() -> Unit>()
@@ -64,6 +82,7 @@ internal class AgentRuntimeSession(
     private class EventDelivery(val event: AgentEvent, val recipients: List<Subscriber>)
 
     init {
+        questionLedger?.registerOwner(runId, questionOwnerGeneration)
         if (eventSink != null || resultSink != null) {
             subscribers += Subscriber(
                 eventSink = eventSink ?: {},
@@ -120,14 +139,79 @@ internal class AgentRuntimeSession(
         private set
 
     val isTerminal: Boolean
-        get() = withSessionLock { state == State.TERMINAL }
+        get() = state == State.TERMINAL
 
-    fun emit(event: AgentEvent): Boolean =
-        withSessionLock {
-            if (state != State.RUNNING) return false
+    /** Main may signal stop without competing with callbacks or worker persistence. */
+    fun signalStop() { stopSignalled = true }
+
+    fun emit(event: AgentEvent): Boolean {
+        if (event is AgentEvent.QuestionRequested || event is AgentEvent.QuestionResolved) return emitQuestion(event)
+        return withSessionLock {
+            if (state != State.RUNNING || stopSignalled) return false
             publishEvent(event)
             true
         }
+    }
+
+    /** Worker pipeline with accepted-only checkpoint work, also outside the state lock. */
+    fun emit(event: AgentEvent, beforeDispatch: () -> Unit): Boolean {
+        if (event is AgentEvent.QuestionRequested || event is AgentEvent.QuestionResolved) return emitQuestion(event, beforeDispatch)
+        if (lock.isHeldByCurrentThread) return false
+        questionAdmission.lock()
+        try {
+            withSessionLock {
+                if (state != State.RUNNING || stopSignalled) return false
+                admittedQuestions++
+            }
+            try { beforeDispatch() }
+            catch (failure: Throwable) {
+                withSessionLock { finishQuestionAdmission() }
+                throw failure
+            }
+            return withSessionLock {
+                try { publishEvent(event); true }
+                finally { finishQuestionAdmission() }
+            }
+        } finally { questionAdmission.unlock() }
+    }
+
+    /**
+     * Reserve under the state lock, persist WITHOUT it, then apply/dispatch the admitted evidence.
+     * COMMITTING rejects new reservations but must wait for existing ones. No ledger callback
+     * acquires the session lock, and no Main stop/registry operation waits for file I/O.
+     */
+    fun emitQuestion(event: AgentEvent, beforeDispatch: () -> Unit = {}): Boolean {
+        if (lock.isHeldByCurrentThread) return false // Reentrant callbacks cannot perform file I/O under the state lock.
+        questionAdmission.lock()
+        try {
+            val snapshot = withSessionLock {
+                if (questionEvidenceFailed || state != State.RUNNING && state != State.STOPPING) return false
+                val prepared = questionIndex.prepare(event) ?: return false
+                admittedQuestions++
+                prepared
+            }
+            try {
+                questionLedger?.accept(questionOwnerGeneration, snapshot)
+                beforeDispatch()
+            } catch (failure: Throwable) {
+                questionEvidenceFailed = true
+                if (failure !is AgentQuestionInterruptedException) questionLedger?.invalidate()
+                withSessionLock { finishQuestionAdmission() }
+                throw AgentQuestionInterruptedException(failure)
+            }
+            return withSessionLock {
+                try {
+                    questionIndex.accept(snapshot)
+                    publishEvent(event)
+                    true
+                } finally {
+                    finishQuestionAdmission()
+                }
+            }
+        } finally {
+            questionAdmission.unlock()
+        }
+    }
 
     /**
      * Record and snapshot recipients at acceptance, not when the queue drains. A
@@ -193,6 +277,30 @@ internal class AgentRuntimeSession(
             dispatchDepth--
             drainEvents()
         }
+    }
+
+    @Volatile var questionCoordinator: AgentQuestionCoordinator? = null
+
+    fun submitQuestionAnswer(submission: AgentRuntimeWire.QuestionAnswerSubmission): AgentQuestionReceipt {
+        val coordinator = withSessionLock {
+            if (state != State.RUNNING || stopSignalled || questionEvidenceFailed || submission.runId != runId) return AgentQuestionReceipt(
+                false, "QUESTION_RUN_NOT_ACTIVE", "该任务已停止或结束")
+            questionCoordinator
+        } ?: return AgentQuestionReceipt(false, "QUESTION_NOT_PENDING", "没有待回答的问题")
+        // Never hold the session lock while the coordinator publishes a resolved event.
+        return coordinator.submitAnswer(submission.conversationId, submission.runId,
+            submission.questionId, submission.toolCallId, submission.answer)
+    }
+
+    fun questionSnapshot(conversationId: String, questionId: String, toolCallId: String): AgentQuestionSnapshot? {
+        if (lock.isHeldByCurrentThread) return if (questionEvidenceFailed || questionLedger?.isAvailable == false) null
+            else questionIndex.snapshot(conversationId, questionId, toolCallId)
+        questionAdmission.lock()
+        try {
+            return withSessionLock {
+                if (questionEvidenceFailed || questionLedger?.isAvailable == false) null else questionIndex.snapshot(conversationId, questionId, toolCallId)
+            }
+        } finally { questionAdmission.unlock() }
     }
 
     fun steer(text: String): Boolean = withSessionLock {
@@ -266,10 +374,13 @@ internal class AgentRuntimeSession(
      * A non-reentrant terminal caller still waits synchronously, releasing the
      * session lock while waiting so child callbacks and isTerminal remain usable.
      */
-    private fun afterChildCompactions(action: () -> Unit) {
+    private fun afterChildCompactions(
+        deferForCallback: Boolean = lock.holdCount > 1 || dispatchDepth > 0 || (childCompactionDepth.get() ?: 0) > 0,
+        action: () -> Unit,
+    ) {
         if (childCompactions == 0) {
             afterUnlock += action
-        } else if (lock.holdCount > 1 || (childCompactionDepth.get() ?: 0) > 0) {
+        } else if (deferForCallback) {
             terminalAfterChildCompactions = action
         } else {
             afterUnlock += {
@@ -314,6 +425,47 @@ internal class AgentRuntimeSession(
                     "Runtime terminal seal wait ended: pending_child_compactions=$pending interrupted=$interrupted"
                 )
             }
+        }
+    }
+
+    private fun finishQuestionAdmission() {
+        admittedQuestions--
+        if (admittedQuestions == 0) {
+            questionsFinished.signalAll()
+            terminalAfterQuestions?.let { afterUnlock += it }
+            terminalAfterQuestions = null
+        }
+    }
+
+    /** Like child sealing, callbacks cannot wait on their own admitted question. */
+    private fun afterQuestions(action: () -> Unit) {
+        if (admittedQuestions == 0) afterUnlock += action
+        else if (lock.holdCount > 1 || dispatchDepth > 0 || (childCompactionDepth.get() ?: 0) > 0) terminalAfterQuestions = action
+        else afterUnlock += {
+            withSessionLock { while (admittedQuestions != 0) questionsFinished.awaitUninterruptibly() }
+            action()
+        }
+    }
+
+    private fun commitTerminal(result: AgentRuntimeWire.RunResult, beforePublish: (AgentRuntimeWire.RunResult) -> Unit) {
+        terminalWork {
+            val coordinateQuestions = questionLedger != null || admittedQuestions != 0
+            if (coordinateQuestions) questionAdmission.lock()
+            try {
+                val persistenceFailure = runCatching {
+                    if (questionEvidenceFailed) throw AgentQuestionInterruptedException()
+                    questionLedger?.sealOwner(questionOwnerGeneration)
+                }.exceptionOrNull()
+                if (persistenceFailure != null) {
+                    questionEvidenceFailed = true
+                    // No transcript/outbox success and no invented Interrupted snapshot after failed storage.
+                    withSessionLock { sealTerminal(result.copy(ok = false, error = AgentQuestionInterruptedException().message)) }
+                } else {
+                    val commitFailure = runCatching { beforePublish(result) }.exceptionOrNull()
+                    withSessionLock { sealTerminal(result) }
+                    commitFailure?.let { throw it }
+                }
+            } finally { if (coordinateQuestions) questionAdmission.unlock() }
         }
     }
 
@@ -365,12 +517,12 @@ internal class AgentRuntimeSession(
     ): Boolean = withSessionLock {
         if (state != State.RUNNING && state != State.STOPPING) return false
         require(result.runId == runId) { "Result runId does not match the active session" }
-        val terminal = if (state == State.STOPPING) result.copy(ok = false, error = "已停止") else result
+        val terminal = if (state == State.STOPPING || stopSignalled) result.copy(ok = false, error = "已停止") else result
         state = State.COMMITTING
-        afterChildCompactions {
-            val commitFailure = runCatching { beforePublish(terminal) }.exceptionOrNull()
-            withSessionLock { sealTerminal(terminal) }
-            commitFailure?.let { throw it }
+        val deferForCallback = lock.holdCount > 1 || dispatchDepth > 0 || (childCompactionDepth.get() ?: 0) > 0
+        if (admittedQuestions == 0) afterChildCompactions { commitTerminal(terminal, beforePublish) }
+        else afterQuestions {
+            withSessionLock { afterChildCompactions(deferForCallback) { commitTerminal(terminal, beforePublish) } }
         }
         true
     }
@@ -383,11 +535,15 @@ internal class AgentRuntimeSession(
             content = "",
             error = reason,
         )
-        if (childCompactions == 0) {
+        if (questionLedger == null && admittedQuestions == 0 && childCompactions == 0) {
             sealTerminal(result)
         } else {
             state = State.COMMITTING
-            afterChildCompactions { withSessionLock { sealTerminal(result) } }
+            val deferForCallback = lock.holdCount > 1 || dispatchDepth > 0 || (childCompactionDepth.get() ?: 0) > 0
+            if (admittedQuestions == 0) afterChildCompactions { commitTerminal(result) {} }
+            else afterQuestions {
+                withSessionLock { afterChildCompactions(deferForCallback) { commitTerminal(result) {} } }
+            }
         }
         true
     }
@@ -398,7 +554,10 @@ internal class AgentRuntimeSession(
         terminalResult = result
         val recipients = subscribers.toList()
         subscribers.clear()
+        // The lightweight authority outlives replay, without retaining prompts/transcript text.
+        if (!questionEvidenceFailed) questionIndex.seal()
         replayEvents.clear()
+        questionLedger?.retireOwner(questionOwnerGeneration)
         pendingEvents.clear()
         afterUnlock += {
             try {

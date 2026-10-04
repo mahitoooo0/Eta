@@ -53,6 +53,7 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Psychology
 import io.github.mangi.eta.ui.icons.SubAgents
 import androidx.compose.material.icons.rounded.Restaurant
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Smartphone
@@ -340,6 +341,12 @@ internal fun SettingsScreen(
                         title = stringResource(R.string.title_model_title),
                         startAction = { PreferenceIcon(icon = Icons.Rounded.AutoAwesome) },
                         onClick = { onNavigate(AppRoute.TitleModel) },
+                    )
+                    ArrowPreference(
+                        title = stringResource(R.string.error_reconnect_title),
+                        summary = stringResource(errorReconnectPolicyLabel(appSettings.errorReconnectPolicy)),
+                        startAction = { PreferenceIcon(icon = Icons.Rounded.Refresh) },
+                        onClick = { onNavigate(AppRoute.ErrorReconnectSettings) },
                     )
                 }
             }

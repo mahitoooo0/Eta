@@ -22,6 +22,8 @@ import io.github.mangi.eta.ui.model.AgentChatHomeUiState
 import io.github.mangi.eta.ui.model.ConversationFolderUi
 import io.github.mangi.eta.ui.model.AgentChatMessageUi
 import io.github.mangi.eta.ui.model.ContextCompactedMessageUi
+import io.github.mangi.eta.ui.model.ErrorReconnectMessageUi
+import io.github.mangi.eta.ui.model.ErrorReconnectStatus
 import io.github.mangi.eta.ui.model.ConversationTokenUsageUi
 import io.github.mangi.eta.ui.model.AgentMessageUi
 import io.github.mangi.eta.ui.model.ThinkingMessageUi
@@ -29,6 +31,7 @@ import io.github.mangi.eta.ui.model.SystemNoticeCode
 import io.github.mangi.eta.ui.model.SystemNoticeMessageUi
 import io.github.mangi.eta.ui.model.TokenUsageUi
 import io.github.mangi.eta.ui.model.ToolActivityMessageUi
+import io.github.mangi.eta.ui.model.AgentQuestionMessageUi
 import io.github.mangi.eta.ui.model.ToolActivityStatusUi
 import io.github.mangi.eta.ui.model.ToolSummaryMessageUi
 import io.github.mangi.eta.ui.model.UserMessageUi
@@ -257,6 +260,9 @@ internal object AgentConversationStore {
             AgentConversationCodec.encodeConversationCheckpoint(history.map { it.copy(turnId = "") })
         }
 
+    suspend fun questionConversationIds(context: Context): List<String> =
+        EtaDatabase.get(context.applicationContext).conversationDao().questionConversationIds()
+
     fun loadConversation(context: Context, id: String): AgentChatHomeUiState? = runBlocking(Dispatchers.IO) {
         val database = EtaDatabase.get(context.applicationContext)
         database.withTransaction {
@@ -307,6 +313,7 @@ internal object AgentConversationStore {
             cloudRouteSignature = receipt?.routeSignature,
             conversationContentLoaded = withContent,
             messages = messages,
+            isWaitingForAnswer = AgentQuestionProjection.hasWaiting(messages),
             history = history,
             appliedRuntimeRunIds = conversation.appliedRuntimeRunIdsJson.toStringList(),
             input = "",
@@ -440,6 +447,15 @@ internal object AgentConversationStore {
                 renderMarkdown = false,
             )
 
+            is ErrorReconnectMessageUi -> ConversationMessageEntity(
+                id = id,
+                conversationId = conversationId,
+                sortIndex = sortIndex,
+                type = TYPE_ERROR_RECONNECT,
+                content = AgentErrorReconnectCodec.encode(this),
+                renderMarkdown = false,
+            )
+
             is ThinkingMessageUi -> ConversationMessageEntity(
                 id = id,
                 conversationId = conversationId,
@@ -447,6 +463,11 @@ internal object AgentConversationStore {
                 type = TYPE_THINKING,
                 content = content,
                 elapsedSeconds = elapsedSeconds,
+            )
+
+            is AgentQuestionMessageUi -> ConversationMessageEntity(
+                id = id, conversationId = conversationId, sortIndex = sortIndex,
+                type = AgentQuestionPersistence.TYPE, content = AgentQuestionPersistence.encode(this), renderMarkdown = false,
             )
 
             is ToolActivityMessageUi -> ConversationMessageEntity(
@@ -520,12 +541,18 @@ internal object AgentConversationStore {
             )
 
             TYPE_SYSTEM_NOTICE -> SystemNoticeCode.fromWireValue(content)?.let { code ->
-                SystemNoticeMessageUi(
+                if (code == SystemNoticeCode.RuntimeFailed) ErrorReconnectMessageUi(
                     id = id,
-                    code = code,
-                    detail = resultSummary,
-                )
+                    runId = "",
+                    reconnectId = "legacy:$id",
+                    round = 0,
+                    status = ErrorReconnectStatus.Failed,
+                    reasonDetail = resultSummary.orEmpty(),
+                    isReconnect = false,
+                ) else SystemNoticeMessageUi(id = id, code = code, detail = resultSummary)
             }
+
+            TYPE_ERROR_RECONNECT -> AgentErrorReconnectCodec.decode(id, content)
 
             TYPE_THINKING -> ThinkingMessageUi(
                 id = id,
@@ -534,6 +561,8 @@ internal object AgentConversationStore {
                 elapsedSeconds = elapsedSeconds,
                 collapsed = true,
             )
+
+            AgentQuestionPersistence.TYPE -> AgentQuestionPersistence.decode(id, conversationId, content)
 
             TYPE_TOOL -> ToolActivityMessageUi(
                 id = id,
@@ -622,6 +651,7 @@ internal object AgentConversationStore {
     private const val TYPE_USER = "user"
     private const val TYPE_ASSISTANT = "assistant"
     private const val TYPE_SYSTEM_NOTICE = "system_notice"
+    private const val TYPE_ERROR_RECONNECT = "error_reconnect"
     private const val TYPE_THINKING = "thinking"
     private const val TYPE_TOOL = "tool"
     private const val TYPE_TOOL_SUMMARY = "tool_summary"

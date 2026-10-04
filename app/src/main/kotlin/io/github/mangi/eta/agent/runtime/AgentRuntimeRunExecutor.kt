@@ -1,6 +1,8 @@
 package io.github.mangi.eta.agent.runtime
 
 import android.content.Context
+import io.github.mangi.eta.agent.question.AgentQuestionCodec
+import io.github.mangi.eta.agent.question.AgentQuestionCoordinator
 import io.github.mangi.eta.config.Prefs
 import io.github.mangi.eta.agent.delegation.*
 import io.github.mangi.eta.agent.browser.ChildBrowserSession
@@ -189,7 +191,7 @@ internal class AgentRuntimeRunExecutor(
             // This never re-resolves a retained child's healthy configuration for continue.
             val ownerKey = SubAgentConfigKey.Conversation(request.effectiveModelSessionId)
             val childConfig = ConversationSubAgentPreferences().snapshot(ownerKey)
-            val childCandidates = runBlocking { ChildWorkerConfigResolver.resolve(childSessionId, childConfig) }
+            val childCandidates = runBlocking { ChildWorkerConfigResolver.resolve(childSessionId, childConfig, parentConfig = request.config) }
             val configuredChildren = AgentChildWorkerAvailability.configuredChildren(childCandidates)
             val childModels = configuredChildren.map { it.second }
             val frozenParallelLimits = childModels.map { childConfig.parallelLimit(SubAgentParallelModel(it.providerId, it.model)) }
@@ -291,9 +293,28 @@ internal class AgentRuntimeRunExecutor(
             } else {
                 ExistingChildTaskTools.appendTo(mcpTools)
             }
+            val questionCoordinator = AgentQuestionCoordinator(runController) { event ->
+                acceptEvent(session, event, archivedEvents, entrySurfaceGuard, checkpointRecorder)
+            }
+            session.questionCoordinator = questionCoordinator
             val delegatedExecutor = AgentModelClient.ToolExecutor { call ->
                 runController.throwIfCancelled()
-                if (call.name == "manage_agent_workspace") {
+                if (call.name == "ask_user") {
+                    val question = AgentQuestionCodec.parseArguments(call.argumentsJson,
+                        conversationId = request.effectiveModelSessionId,
+                        runId = request.runId, toolCallId = call.id,
+                        questionId = "question-${UUID.randomUUID()}", createdAtMillis = System.currentTimeMillis())
+                    val answer = try { questionCoordinator.awaitAnswer(question) }
+                    catch (failure: Exception) {
+                        runController.throwIfCancelled()
+                        throw io.github.mangi.eta.agent.question.AgentQuestionInterruptedException(failure)
+                    }
+                    if (answer == null) {
+                        runController.throwIfCancelled()
+                        throw io.github.mangi.eta.agent.question.AgentQuestionInterruptedException()
+                    }
+                    AgentModelClient.ToolResult(AgentQuestionCodec.resultJson(question, answer).toString())
+                } else if (call.name == "manage_agent_workspace") {
                     val backend = childWorkspace
                     val payload = try { AgentWorkspaceAccessPolicy.execute(
                         argumentsJson = call.argumentsJson,
@@ -364,7 +385,8 @@ internal class AgentRuntimeRunExecutor(
             AgentRuntimeWire.RunResult(runId = request.runId, ok = true, content = completedResponse.content,
                 reasoningContent = completedResponse.reasoningContent, transcript = completedResponse.transcript)
         } catch (throwable: Throwable) {
-            cancelled = runController.isCancelled || throwable is AgentRunCancelledException
+            cancelled = runController.isCancelled || throwable is AgentRunCancelledException ||
+                throwable is java.util.concurrent.CancellationException || throwable is InterruptedException
             val modelFailure = throwable as? AgentModelExecutionException
             val message = if (cancelled) "已停止" else throwable.message ?: throwable.javaClass.simpleName
             // This catch is after the retry loop has given up, not a ModelRetryScheduled event.
@@ -377,6 +399,9 @@ internal class AgentRuntimeRunExecutor(
                 AndroidAgentLogger.error("Agent runtime failed: type=${throwable.safeLogType()}, " +
                     "model_code=${requestFailure?.code.orEmpty()}, cause_type=${requestFailure?.cause?.safeLogType().orEmpty()}, " +
                     "detail=${(requestFailure?.message ?: throwable.message).orEmpty().take(600)}")
+                AgentErrorReconnectTerminal.failureEvent(archivedEvents, throwable, request.config.apiKey)?.let {
+                    runCatching { acceptEvent(session, it, archivedEvents, entrySurfaceGuard, checkpointRecorder) }
+                }
                 val event = AgentEvent.RunFailed(message)
                 runCatching { acceptEvent(session, event, archivedEvents, entrySurfaceGuard, checkpointRecorder) }
                     .onFailure { checkpointFailure ->
@@ -384,6 +409,7 @@ internal class AgentRuntimeRunExecutor(
                         session.emit(event)
                     }
             }
+            if (throwable is Error || throwable is java.util.concurrent.CancellationException) throw throwable
             AgentRuntimeWire.RunResult(runId = request.runId, ok = false, content = "", error = message,
                 reasoningContent = modelFailure?.reasoningContent ?: (throwable as? AgentRunCancelledException)?.reasoningContent.orEmpty(),
                 transcript = modelFailure?.transcript ?: (throwable as? AgentRunCancelledException)?.transcript.orEmpty())
@@ -444,8 +470,11 @@ internal class AgentRuntimeRunExecutor(
     @Synchronized private fun acceptEvent(session: AgentRuntimeSession, event: AgentEvent,
         archivedEvents: MutableList<AgentEvent>, entrySurfaceGuard: EntrySurfaceGuard?,
         checkpointRecorder: AgentRunCheckpointRecorder?) {
-        checkpointRecorder?.accept(event)
-        if (!session.emit(event)) return
+        if (event is AgentEvent.QuestionRequested || event is AgentEvent.QuestionResolved) {
+            AgentQuestionEventPublisher.publish(session, event) { checkpointRecorder?.accept(event) }
+        } else {
+            if (!session.emit(event) { checkpointRecorder?.accept(event) }) return
+        }
         archivedEvents += event
         if (event is AgentEvent.ModelRetryScheduled) AndroidAgentLogger.warn("Agent runtime event: ${event.toLogLine()}")
         else if (event !is AgentEvent.AssistantBlockDelta) AndroidAgentLogger.debug { "Agent runtime event: ${event.toLogLine()}" }

@@ -12,6 +12,29 @@ import kotlin.concurrent.withLock
 
 internal class AgentRunController {
     private val resources = CopyOnWriteArraySet<CancellableResource>()
+    private val transportScope = ThreadLocal<TransportScope>()
+
+    /** Cancels only the current model transport, never the user run or its tool owners. */
+    internal inner class TransportScope {
+        private val scopedResources = CopyOnWriteArraySet<CancellableResource>()
+        private val expired = AtomicBoolean(false)
+        val isExpired: Boolean get() = expired.get()
+        internal fun attach(resource: CancellableResource) {
+            scopedResources.add(resource)
+            if (expired.get()) resource.cancel()
+        }
+        fun cancelTransport() {
+            expired.set(true)
+            scopedResources.forEach { it.cancel() }
+        }
+        fun <T> run(block: () -> T): T {
+            val previous = transportScope.get()
+            transportScope.set(this)
+            try { return block() }
+            finally { if (previous == null) transportScope.remove() else transportScope.set(previous) }
+        }
+    }
+    internal fun newTransportScope(): TransportScope = TransportScope()
     @Volatile private var cancelled = false
     val isCancelled: Boolean get() = cancelled
     private val lock = ReentrantLock()
@@ -54,7 +77,11 @@ internal class AgentRunController {
         }
         // Wake the in-flight model request before releasing tool owners. Tool/browser cleanup
         // may block; insertion order used to put it ahead of the SSE cancellation binding.
-        resources.toList().sortedByDescending { it.interruptible }
+        // Keep the contract-visible interruptible ordering, then stably prioritize resources
+        // that must wake the provider before slower tool/browser cleanup starts.
+        resources.toList()
+            .sortedByDescending { it.interruptible }
+            .sortedByDescending { it.wakeBeforeCleanup }
             .forEach { resource -> runCatching { resource.cancel() } }
     }
 
@@ -185,16 +212,18 @@ internal class AgentRunController {
         finally { binding.close() }
         throwIfCancelled()
     }
-    fun register(interruptible: Boolean = false, cancel: () -> Unit): ResourceBinding {
-        val resource = CancellableResource(cancel, interruptible)
+    fun register(interruptible: Boolean = false, wakeBeforeCleanup: Boolean = false, cancel: () -> Unit): ResourceBinding {
+        val resource = CancellableResource(cancel, interruptible, wakeBeforeCleanup)
         resources.add(resource)
+        if (interruptible) transportScope.get()?.attach(resource)
         if (cancelled) resource.cancel()
         return ResourceBinding { resources.remove(resource) }
     }
     inner class ResourceBinding internal constructor(private val closeBlock: () -> Unit) {
         fun close() { closeBlock() }
     }
-    private class CancellableResource(private val cancelBlock: () -> Unit, val interruptible: Boolean) {
+    internal class CancellableResource(private val cancelBlock: () -> Unit, val interruptible: Boolean,
+        val wakeBeforeCleanup: Boolean) {
         private val cancelled = AtomicBoolean(false)
         fun cancel() { if (cancelled.compareAndSet(false, true)) cancelBlock() }
     }
