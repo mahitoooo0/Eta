@@ -302,7 +302,7 @@ internal class UbuntuEnvironmentInstaller(
             runCatching {
                 java.io.File(context.cacheDir, "eta-profile-failures.log").appendText(
                     "==== ubuntu install_tools exit=${result.exitCode} ====\n" +
-                        result.output.takeLast(4000) + "\n\n",
+                        result.output.failureExcerpt() + "\n\n",
                 )
             }
         }

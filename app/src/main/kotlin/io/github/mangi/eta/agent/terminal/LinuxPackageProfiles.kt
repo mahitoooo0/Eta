@@ -305,7 +305,7 @@ internal class LinuxPackageProfileInstaller(
             runCatching {
                 failureLog.appendText(
                     "==== ${profile.id} @ ${distribution.wireName} exit=${result.exitCode} ====\n" +
-                        result.output.takeLast(4000) + "\n\n",
+                        result.output.failureExcerpt() + "\n\n",
                 )
                 AndroidAgentLogger.info("Package profile failure detail at ${failureLog.absolutePath}")
             }
@@ -321,3 +321,7 @@ internal class LinuxPackageProfileInstaller(
         private val installMutex = Mutex()
     }
 }
+
+/** 失败日志取头尾两段：首个错误常在开头，重试后的错误在结尾，只留尾部会漏掉前者。 */
+internal fun String.failureExcerpt(limit: Int = 4000): String =
+    if (length <= limit) this else take(limit / 2) + "\n...[中略]...\n" + takeLast(limit / 2)

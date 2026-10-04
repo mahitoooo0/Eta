@@ -119,7 +119,7 @@ internal class DshPluginInstaller(
                 runCatching {
                     java.io.File(context.cacheDir, "eta-profile-failures.log").appendText(
                         "==== plugin ${entry.id} (${entry.installKind}) exit=${result.exitCode} ====\n" +
-                            result.output.takeLast(4000) + "\n\n",
+                            result.output.failureExcerpt() + "\n\n",
                     )
                 }
                 return@withContext DshPluginResult.Failed(
