@@ -261,8 +261,8 @@ internal class UbuntuEnvironmentInstaller(
             rm -f /etc/apt/apt.conf.d/99eta-proxy 2>/dev/null
             for eta_proxy in ${'$'}PROXY_CANDIDATES; do
               if timeout 3 bash -c "exec 3<>/dev/tcp/${'$'}{eta_proxy%:*}/${'$'}{eta_proxy##*:}" 2>/dev/null; then
-                printf 'Acquire::http::Proxy "http://%s";\nAcquire::https::Proxy "http://%s";\n' "$eta_proxy" "$eta_proxy" > /etc/apt/apt.conf.d/99eta-proxy
-                echo "eta: using apt proxy $eta_proxy"
+                printf 'Acquire::http::Proxy "http://%s";\nAcquire::https::Proxy "http://%s";\n' "${'$'}eta_proxy" "${'$'}eta_proxy" > /etc/apt/apt.conf.d/99eta-proxy
+                echo "eta: using apt proxy ${'$'}eta_proxy"
                 break
               fi
             done
