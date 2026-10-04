@@ -1118,6 +1118,7 @@
   <string name="linux_dsh_tools_ready">DeepSeek Harness is ready; run dsh in the terminal</string>
   <string name="linux_dsh_plugin_library">Plugin Library</string>
   <string name="linux_dsh_plugin_open">Plugins</string>
+  <string name="linux_dsh_plugin_market">Plugin market</string>
   <string name="linux_dsh_plugin_install">Install</string>
   <string name="linux_dsh_plugin_uninstall">Uninstall</string>
   <string name="linux_dsh_plugin_installed">Installed</string>
@@ -1131,6 +1132,7 @@
   <string name="linux_dsh_plugin_uninstall_done">Removed</string>
   <string name="linux_dsh_plugin_busy">Working</string>
   <string name="linux_dsh_plugin_failed">Operation failed</string>
+  <string name="linux_dsh_web_failed_logs">Could not read the dsh Web logs</string>
   <string name="linux_dsh_plugin_category_plugin">Harness plugins</string>
   <string name="linux_dsh_plugin_category_mcp">MCP servers</string>
   <string name="linux_dsh_plugin_category_skill">Agent skills</string>
@@ -1591,19 +1593,4 @@
   <string name="vd_preview_note">Read-only local preview with a temporary viewing key. Requires the updated port-3070 web page. Updates while visible; no display is created or controlled.</string>
   <string name="vd_preview_control_open">Web preview and manual close</string>
   <string name="system_notice_completed">Completed</string>
-  <string name="error_reconnect_title">Error reconnect</string>
-  <string name="error_reconnect_description">Automatically retry after an error until successful or timed out. Applies to all models.</string>
-  <string name="error_reconnect_duration">Total retry duration</string>
-  <string name="error_reconnect_none">Do not reconnect</string>
-  <string name="error_reconnect_window_30s">30 seconds</string>
-  <string name="error_reconnect_window_1m">1 minute</string>
-  <string name="error_reconnect_window_5m">5 minutes</string>
-  <string name="error_reconnect_continuous">Keep reconnecting</string>
-  <string name="error_reconnect_save_failed">Could not save the reconnect setting. Please try again.</string>
-  <string name="reconnect_running">Reconnecting: %1$s</string>
-  <string name="reconnect_succeeded">Reconnected</string>
-  <string name="reconnect_failed">Reconnect failed</string>
-  <string name="reconnect_stopped">Reconnecting stopped</string>
-  <string name="reconnect_error_title">Error details</string>
-  <string name="reconnect_elapsed_format">%1$s elapsed</string>
 </resources>

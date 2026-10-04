@@ -1133,6 +1133,7 @@
   <string name="linux_dsh_tools_ready">DeepSeek Harness 已就绪，在终端运行 dsh 即可开始</string>
   <string name="linux_dsh_plugin_library">插件库</string>
   <string name="linux_dsh_plugin_open">插件</string>
+  <string name="linux_dsh_plugin_market">插件市场</string>
   <string name="linux_dsh_plugin_install">安装</string>
   <string name="linux_dsh_plugin_uninstall">卸载</string>
   <string name="linux_dsh_plugin_installed">已安装</string>
@@ -1146,6 +1147,7 @@
   <string name="linux_dsh_plugin_uninstall_done">已卸载</string>
   <string name="linux_dsh_plugin_busy">处理中</string>
   <string name="linux_dsh_plugin_failed">操作失败</string>
+  <string name="linux_dsh_web_failed_logs">读不到 dsh Web 的日志</string>
   <string name="linux_dsh_plugin_category_plugin">dsh 插件</string>
   <string name="linux_dsh_plugin_category_mcp">MCP 服务器</string>
   <string name="linux_dsh_plugin_category_skill">Agent 技能</string>
@@ -1564,19 +1566,4 @@
   <string name="vd_preview_note">只读本机画面，使用临时查看授权，需要配套新版 3070 网页。网页可见时持续刷新，不会新建或控制副屏。</string>
   <string name="vd_preview_control_open">网页预览与手动关闭</string>
   <string name="system_notice_completed">已完成</string>
-  <string name="error_reconnect_title">错误重连</string>
-  <string name="error_reconnect_description">出错后自动重试，直到成功或超时。所有模型通用。</string>
-  <string name="error_reconnect_duration">总重试时长</string>
-  <string name="error_reconnect_none">不重连</string>
-  <string name="error_reconnect_window_30s">30秒</string>
-  <string name="error_reconnect_window_1m">1分钟</string>
-  <string name="error_reconnect_window_5m">5分钟</string>
-  <string name="error_reconnect_continuous">持续重连</string>
-  <string name="error_reconnect_save_failed">无法保存重连设置，请重试。</string>
-  <string name="reconnect_running">正在重连：%1$s</string>
-  <string name="reconnect_succeeded">已重连</string>
-  <string name="reconnect_failed">重连失败</string>
-  <string name="reconnect_stopped">已停止重连</string>
-  <string name="reconnect_error_title">错误详情</string>
-  <string name="reconnect_elapsed_format">已用时 %1$s</string>
 </resources>

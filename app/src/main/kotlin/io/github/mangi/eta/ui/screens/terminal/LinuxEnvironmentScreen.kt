@@ -38,7 +38,6 @@ import io.github.mangi.eta.agent.terminal.DebianInstallProgress
 import io.github.mangi.eta.agent.terminal.DebianInstallResult
 import io.github.mangi.eta.agent.terminal.DebianInstallStage
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
-import io.github.mangi.eta.agent.terminal.DshPluginInstaller
 import io.github.mangi.eta.agent.terminal.LinuxApkAnalysisInstaller
 import io.github.mangi.eta.agent.terminal.LinuxDistribution
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
@@ -215,10 +214,6 @@ internal fun LinuxEnvironmentScreen(
     }
     var dshWebLaunching by remember { mutableStateOf(false) }
     var dshWebRunning by remember(selectedDistribution, backend) { mutableStateOf(false) }
-    var showDshPluginSheet by remember { mutableStateOf(false) }
-    val dshPluginInstaller = remember(appContext, selectedDistribution) {
-        DshPluginInstaller(context = appContext, distribution = selectedDistribution)
-    }
     val dshWebLauncher = remember(appContext) {
         DshWebLauncher(
             context = appContext,
@@ -565,12 +560,14 @@ internal fun LinuxEnvironmentScreen(
                                                 onClick = { launchDshWeb() },
                                             )
                                         }
+                                        // 插件由 dsh 自己管：这里只给一个直达入口，
+                                        // 打开 dsh Web 后在它自己的界面里管理插件，
+                                        // 不在 Eta 里另造一套插件目录。
                                         TextButton(
-                                            text = stringResource(R.string.linux_dsh_plugin_open),
-                                            // root 被撤销时打开面板只会让每个操作都必然失败。
+                                            text = stringResource(R.string.linux_dsh_plugin_market),
                                             enabled = !dshWebLaunching && !requiresRoot,
                                             colors = ButtonDefaults.textButtonColorsPrimary(),
-                                            onClick = { showDshPluginSheet = true },
+                                            onClick = { launchDshWeb() },
                                         )
                                     }
                                     TextButton(
@@ -666,13 +663,6 @@ internal fun LinuxEnvironmentScreen(
                 }
             }
         }
-    }
-    if (showDshPluginSheet) {
-        DshPluginLibrarySheet(
-            installer = dshPluginInstaller,
-            actionScope = coroutineScope,
-            onDismiss = { showDshPluginSheet = false },
-        )
     }
 }
 

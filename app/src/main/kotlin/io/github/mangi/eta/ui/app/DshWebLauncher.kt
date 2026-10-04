@@ -4,22 +4,20 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.net.toUri
 import io.github.mangi.eta.R
-import io.github.mangi.eta.agent.terminal.DaemonStartResult
 import io.github.mangi.eta.agent.terminal.DetachedTaskSupervisor
 import io.github.mangi.eta.agent.terminal.LinuxEnvironmentPaths
-import io.github.mangi.eta.agent.terminal.LinuxExecutionBackend
 import io.github.mangi.eta.agent.terminal.TerminalEnvironment
 import io.github.mangi.eta.agent.terminal.TerminalRuntime
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.net.InetSocketAddress
-import java.net.Socket
 
 internal data class DshWebRuntimeStatus(
     val taskId: String? = null,
     val running: Boolean = false,
     val url: String? = null,
+    val code: String? = null,
 )
 
 internal sealed interface DshWebLaunchResult {
@@ -30,129 +28,100 @@ internal sealed interface DshWebLaunchResult {
 /**
  * `dsh web` 的启停。
  *
- * 与 [KimiWebLauncher] 的差别：dsh 的监听地址与端口是固定的（日志里也不一定给可解析的 URL），
- * 所以不解析日志，而是直接探测 127.0.0.1:3080 是否已经 accepting，再交给系统浏览器。
- * 插件库装完技能或 MCP 后不需要重启（dsh 会热重载这两处），但装完 dsh 插件或 CLI agent
- * 需要重启才生效——这个入口就是为此准备的。
+ * 与 [KimiWebLauncher] 同构：**不探测端口，而是从日志里取带认证的地址**。
+ *
+ * 早先的实现假设「dsh 的监听地址与端口固定、日志里不一定给可解析的 URL」，
+ * 于是直接打开 `http://127.0.0.1:3080`——实测被 dsh 拒绝，页面提示
+ * `dsh web authentication required`。查 `@deepseek-ai/dsh-web-app` 源码确认：
+ * dsh 就绪时会打印 `dsh web: <authenticatedUrl>`，必须用那一行里的地址。
+ * 详见 [DshWebSession.addressFromLogs]。
  */
 internal class DshWebLauncher(
     private val context: Context,
     private val daemonSupervisor: DetachedTaskSupervisor,
 ) {
-    suspend fun launch(environment: TerminalEnvironment): DshWebLaunchResult = withContext(Dispatchers.IO) {
-        val distribution = environment.linuxDistribution
-            ?: return@withContext DshWebLaunchResult.Failed("INVALID_ENVIRONMENT")
-        val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
-        if (!LinuxEnvironmentPaths.rootfsReady(rootfs.absolutePath)) {
-            return@withContext DshWebLaunchResult.Failed("LINUX_ENVIRONMENT_NOT_READY")
-        }
-        val identity = TerminalRuntime.defaultIdentity(environment, rootfs.absolutePath)
-        if (identity == "root" && !TerminalRuntime.rootAvailable) {
-            return@withContext DshWebLaunchResult.Failed("ROOT_REQUIRED")
-        }
-        val backend = LinuxEnvironmentPaths.backendOf(rootfs.absolutePath)
+    private val session = DshWebSession(
+        tasks = object : DshWebSession.Tasks {
+            override fun list() = daemonSupervisor.list()
+            override fun start(environment: TerminalEnvironment, identity: String) = daemonSupervisor.start(
+                command = DshWebSession.COMMAND,
+                cwd = WORKDIR,
+                identity = identity,
+                environment = environment,
+            )
+            override fun logs(id: String) = daemonSupervisor.readLogs(id)
+            override fun stop(id: String) { daemonSupervisor.stop(id) }
+        },
+        openUrl = { url ->
+            try {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                true
+            } catch (_: android.content.ActivityNotFoundException) {
+                false
+            } catch (_: SecurityException) {
+                false
+            }
+        },
+    )
 
-        // 已经在跑就直接开浏览器，别重复起一个服务抢端口；
-        // 但「在跑却没监听」说明它是上次失败留下的僵尸，先清掉再重起，
-        // 否则它会一直占着记录让后续启动永远判定失败。
-        val existing = findTask(environment, identity, backend)
-        if (existing != null && existing.running) {
-            if (awaitPort(waitAttempts = 1)) return@withContext openInBrowser()
-            if (!daemonSupervisor.stop(existing.task.id)) {
-                return@withContext DshWebLaunchResult.Failed("ZOMBIE_STOP_FAILED")
+    suspend fun launch(environment: TerminalEnvironment): DshWebLaunchResult = launchMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val distribution = environment.linuxDistribution
+                ?: return@withContext DshWebLaunchResult.Failed("INVALID_ENVIRONMENT")
+            val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
+            if (!LinuxEnvironmentPaths.rootfsReady(rootfs.absolutePath)) {
+                return@withContext DshWebLaunchResult.Failed("LINUX_ENVIRONMENT_NOT_READY")
             }
-        }
-        val taskId = when (val started = daemonSupervisor.start(
-            command = COMMAND,
-            cwd = WORKDIR,
-            identity = identity,
-            environment = environment,
-        )) {
-            is DaemonStartResult.Started -> started.task.id
-            is DaemonStartResult.Failed -> return@withContext DshWebLaunchResult.Failed(started.code)
-        }
-        if (!awaitPort()) {
-            // 起不来就别留一个僵尸任务占着位置；诊断信息随任务日志一起留在守护任务里。
-            if (!daemonSupervisor.stop(taskId)) {
-                return@withContext DshWebLaunchResult.Failed("ZOMBIE_STOP_FAILED")
+            val identity = TerminalRuntime.defaultIdentity(environment, rootfs.absolutePath)
+            if (identity == "root" && !TerminalRuntime.rootAvailable) {
+                return@withContext DshWebLaunchResult.Failed("ROOT_REQUIRED")
             }
-            return@withContext DshWebLaunchResult.Failed("PORT_TIMEOUT")
+            session.launch(
+                environment = environment,
+                identity = identity,
+                backend = LinuxEnvironmentPaths.backendOf(rootfs.absolutePath),
+            )
         }
-        openInBrowser()
     }
 
     suspend fun status(environment: TerminalEnvironment): DshWebRuntimeStatus = withContext(Dispatchers.IO) {
-        val distribution = environment.linuxDistribution
-            ?: return@withContext DshWebRuntimeStatus()
+        val distribution = environment.linuxDistribution ?: return@withContext DshWebRuntimeStatus()
         val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
         if (!LinuxEnvironmentPaths.rootfsReady(rootfs.path)) return@withContext DshWebRuntimeStatus()
         val identity = TerminalRuntime.defaultIdentity(environment, rootfs.path)
-        val task = findTask(environment, identity, LinuxEnvironmentPaths.backendOf(rootfs.path))
-            ?: return@withContext DshWebRuntimeStatus()
-        // 端口只探一次：探两次会出现「running=true 但 url=null」的自相矛盾状态。
-        val serving = task.running && portOpen()
-        DshWebRuntimeStatus(taskId = task.task.id, running = serving, url = URL.takeIf { serving })
-    }
-
-    suspend fun stop(environment: TerminalEnvironment): Boolean = withContext(Dispatchers.IO) {
-        val distribution = environment.linuxDistribution ?: return@withContext false
-        val rootfs = LinuxEnvironmentPaths.rootfsDir(context, distribution)
-        if (!LinuxEnvironmentPaths.rootfsReady(rootfs.path)) return@withContext false
-        val identity = TerminalRuntime.defaultIdentity(environment, rootfs.path)
-        val task = findTask(environment, identity, LinuxEnvironmentPaths.backendOf(rootfs.path))
-            ?: return@withContext false
-        daemonSupervisor.stop(task.task.id)
-    }
-
-    private fun findTask(
-        environment: TerminalEnvironment,
-        identity: String,
-        backend: LinuxExecutionBackend,
-    ) = daemonSupervisor.list()
-        .filter {
+        if (identity == "root" && !TerminalRuntime.rootAvailable) return@withContext DshWebRuntimeStatus()
+        val matches = daemonSupervisor.list().filter {
             it.task.environment == environment && it.task.identity == identity &&
-                it.task.backend == backend && it.task.command.trim() == COMMAND
+                it.task.backend == LinuxEnvironmentPaths.backendOf(rootfs.path) &&
+                it.task.command.trim() in DshWebSession.COMMANDS
         }
-        .lastOrNull()
-
-    private fun openInBrowser(): DshWebLaunchResult = try {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, URL.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        val task = matches.lastOrNull { it.running } ?: matches.lastOrNull()
+            ?: return@withContext DshWebRuntimeStatus()
+        if (!task.running) return@withContext DshWebRuntimeStatus(taskId = task.task.id, code = "DSH_EXITED")
+        val logs = daemonSupervisor.readLogs(task.task.id)
+        DshWebRuntimeStatus(
+            taskId = task.task.id,
+            running = true,
+            url = if (logs.ok) DshWebSession.addressFromLogs(logs.text) else null,
+            code = if (logs.ok) null else logs.code,
         )
-        DshWebLaunchResult.Opened(URL)
-    } catch (_: android.content.ActivityNotFoundException) {
-        DshWebLaunchResult.Failed("BROWSER_UNAVAILABLE")
-    } catch (_: SecurityException) {
-        DshWebLaunchResult.Failed("BROWSER_UNAVAILABLE")
     }
 
-    private suspend fun awaitPort(waitAttempts: Int = DEFAULT_WAIT_ATTEMPTS): Boolean {
-        repeat(waitAttempts) {
-            if (portOpen()) return true
-            delay(WAIT_INTERVAL_MS)
+    suspend fun stop(environment: TerminalEnvironment): Boolean = launchMutex.withLock {
+        withContext(Dispatchers.IO) {
+            // status 自身不取锁，所以这里不会与 launchMutex 重入。
+            val status = status(environment)
+            status.taskId?.let(daemonSupervisor::stop) ?: false
         }
-        return false
     }
 
-    private fun portOpen(): Boolean = try {
-        Socket().use { it.connect(InetSocketAddress(HOST, PORT), PROBE_TIMEOUT_MS) }
-        true
-    } catch (_: Exception) {
-        false
-    }
-
-    companion object {
-        const val COMMAND = "dsh web"
-        const val HOST = "127.0.0.1"
-        const val PORT = 3080
-        const val URL = "http://$HOST:$PORT"
+    private companion object {
+        val launchMutex = Mutex()
 
         /** dsh 的工作目录固定为 /workspace，与 profile 解析保持一致。 */
         const val WORKDIR = "/workspace"
-
-        private const val DEFAULT_WAIT_ATTEMPTS = 90
-        private const val WAIT_INTERVAL_MS = 500L
-        private const val PROBE_TIMEOUT_MS = 500
     }
 }
 
@@ -166,7 +135,10 @@ internal fun DshWebLaunchResult.dshWebMessage(context: Context): String? = when 
     is DshWebLaunchResult.Opened -> null
     is DshWebLaunchResult.Failed -> context.getString(
         when (code) {
-            "PORT_TIMEOUT", "PORT_NOT_OPEN" -> R.string.linux_dsh_web_failed_port
+            // 拿不到地址分两种：dsh 自己退了，或等到超时。给用户的信息不一样。
+            "DSH_EXITED" -> R.string.linux_dsh_web_failed_start
+            "URL_TIMEOUT" -> R.string.linux_dsh_web_failed_port
+            "LOGS_UNAVAILABLE" -> R.string.linux_dsh_web_failed_logs
             "BROWSER_UNAVAILABLE" -> R.string.linux_dsh_web_failed_browser
             "ROOT_REQUIRED" -> R.string.linux_dsh_web_failed_root
             "LINUX_ENVIRONMENT_NOT_READY", "INVALID_ENVIRONMENT" -> R.string.linux_dsh_web_failed_env
