@@ -76,6 +76,15 @@ jobs:
         # 真机验证用；包含 Ubuntu 支持、DEB822 清理与文案修复
         run: ./gradlew --no-daemon --no-configuration-cache :app:assembleDebug
 
+      # 打印 APK **自身**的证书指纹（不是 keystore 的），用于判断能否覆盖安装。
+      # 之前只打印 keytool 读到的 keystore 指纹，真机装不上时无法定位到底是哪个环节变了。
+      - name: 打印 APK 证书指纹
+        run: |
+          set -euo pipefail
+          apksigner_path="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$apksigner_path"
+          "$apksigner_path" verify --print-certs app/build/outputs/apk/debug/*.apk
+
       - name: 上传 Debug APK
         uses: actions/upload-artifact@v4
         with:
