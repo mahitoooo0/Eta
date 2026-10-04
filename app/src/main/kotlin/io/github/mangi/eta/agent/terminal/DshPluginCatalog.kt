@@ -213,7 +213,7 @@ internal object DshPluginCatalog {
 
     /** 生成批量探测脚本：逐条判断是否已安装，已安装的输出一行标记。 */
     fun probeScript(): String = buildString {
-        append("set -e\n")
+        append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
         ENTRIES.forEach { entry ->
             append("if ").append(probeCommand(entry)).append(" >/dev/null 2>&1; then\n")
             append("  printf '").append(PROBE_LINE_PREFIX).append(" %s\\n' ").append(entry.id).append('\n')
@@ -242,7 +242,7 @@ internal object DshPluginCatalog {
     private fun dshPluginInstallScript(entry: DshPluginEntry): String {
         val pkg = requireNotNull(entry.packageName)
         return buildString {
-            append("set -e\n")
+            append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
             append("if ! command -v pnpm >/dev/null 2>&1; then\n")
             append("  echo 'eta: installing pnpm for dsh plugin management'\n")
             append("  npm install -g --prefix /usr/local --registry=").append(MIRROR_REGISTRY).append(" pnpm\n")
@@ -255,7 +255,7 @@ internal object DshPluginCatalog {
     private fun dshPluginUninstallScript(entry: DshPluginEntry): String {
         val pkg = requireNotNull(entry.packageName)
         return buildString {
-            append("set -e\n")
+            append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
             append("if ! command -v pnpm >/dev/null 2>&1; then\n")
             append("  npm install -g --prefix /usr/local --registry=").append(MIRROR_REGISTRY).append(" pnpm\n")
             append("fi\n")
@@ -292,7 +292,7 @@ internal object DshPluginCatalog {
     private fun mcpScript(entry: DshPluginEntry, install: Boolean): String {
         val server = requireNotNull(entry.serverName)
         return buildString {
-            append("set -e\n")
+            append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
             append("ETA_MCP_MODE=").append(if (install) "install" else "uninstall")
                 .append(" ETA_MCP_SERVER=").append(server)
                 .append(" ETA_MCP_PKG=").append(requireNotNull(entry.packageName))
@@ -376,7 +376,7 @@ internal object DshPluginCatalog {
         val dir = requireNotNull(entry.skillDirName)
         val body = requireNotNull(entry.skillBody)
         return buildString {
-            append("set -e\n")
+            append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
             append("mkdir -p \"${'$'}HOME/.dsh/skills/").append(dir).append("\"\n")
             append("cat > \"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\" <<'ETA_SKILL_EOF'\n")
             append(body)
@@ -393,7 +393,7 @@ internal object DshPluginCatalog {
     private fun skillUninstallScript(entry: DshPluginEntry): String {
         val dir = requireNotNull(entry.skillDirName)
         return buildString {
-            append("set -e\n")
+            append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
             append("f=\"${'$'}HOME/.dsh/skills/").append(dir).append("/SKILL.md\"\n")
             append("if [ -f \"\$f\" ] && grep -q '").append(SKILL_OWNER_MARKER).append("' \"\$f\"; then\n")
             append("  rm -f \"\$f\"\n")
@@ -406,7 +406,7 @@ internal object DshPluginCatalog {
         val pkg = requireNotNull(entry.packageName)
         val cmd = entry.commandName
         return buildString {
-            append("set -e\n")
+            append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
             append("npm install -g --prefix /usr/local --registry=").append(MIRROR_REGISTRY)
                 .append(' ').append(pkg).append(" || ")
                 .append("npm install -g --prefix /usr/local ").append(pkg).append('\n')
@@ -417,7 +417,7 @@ internal object DshPluginCatalog {
     private fun npmGlobalUninstallScript(entry: DshPluginEntry): String {
         val pkg = requireNotNull(entry.packageName)
         return buildString {
-            append("set -e\n")
+            append("set -e\n").append(LinuxPackageProfiles.PROXY_BOOTSTRAP_SHELL)
             append("npm uninstall -g --prefix /usr/local ").append(pkg).append(" || true\n")
         }
     }

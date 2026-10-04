@@ -257,12 +257,21 @@ internal class UbuntuEnvironmentInstaller(
             PROXY_CANDIDATES="${APT_PROXY_CANDIDATES.joinToString(" ")}"
             mkdir -p /usr/local/bin
             rm -f /etc/apt/sources.list.d/*.sources 2>/dev/null
-            mkdir -p /etc/apt/apt.conf.d
-            rm -f /etc/apt/apt.conf.d/99eta-proxy 2>/dev/null
+            mkdir -p /etc/apt/apt.conf.d /etc/profile.d /usr/local/etc
+            rm -f /etc/apt/apt.conf.d/99eta-proxy /etc/profile.d/99eta-proxy.sh 2>/dev/null
+            # chroot 内不做域名解析：解析在本机一律 EAI_AGAIN（Android 拦截明文 DNS，
+            # 而代理走 VPN/eBPF 只接管宿主流量）。所以凡是联网工具都必须走代理，
+            # 由代理端解析域名。只给 apt 配代理会让 npm/pip/git 全部失败。
             for eta_proxy in ${'$'}PROXY_CANDIDATES; do
               if timeout 3 bash -c "exec 3<>/dev/tcp/${'$'}{eta_proxy%:*}/${'$'}{eta_proxy##*:}" 2>/dev/null; then
-                printf 'Acquire::http::Proxy "http://%s";\nAcquire::https::Proxy "http://%s";\n' "${'$'}eta_proxy" "${'$'}eta_proxy" > /etc/apt/apt.conf.d/99eta-proxy
-                echo "eta: using apt proxy ${'$'}eta_proxy"
+                eta_px="http://${'$'}eta_proxy"
+                printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "${'$'}eta_px" "${'$'}eta_px" > /etc/apt/apt.conf.d/99eta-proxy
+                printf '#!/bin/sh\nexport http_proxy="%s"\nexport https_proxy="%s"\nexport all_proxy="%s"\nexport no_proxy="localhost,127.0.0.1,::1"\n' "${'$'}eta_px" "${'$'}eta_px" "${'$'}eta_px" > /etc/profile.d/99eta-proxy.sh
+                chmod 0644 /etc/profile.d/99eta-proxy.sh /etc/apt/apt.conf.d/99eta-proxy
+                printf 'proxy=%s\nhttps-proxy=%s\n' "${'$'}eta_px" "${'$'}eta_px" > /usr/local/etc/npmrc
+                mkdir -p /root 2>/dev/null
+                printf 'proxy=%s\nhttps-proxy=%s\n' "${'$'}eta_px" "${'$'}eta_px" > /root/.npmrc 2>/dev/null || true
+                echo "eta: proxy ${'$'}eta_px applied to apt/npm/shell"
                 break
               fi
             done

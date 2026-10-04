@@ -53,8 +53,20 @@ internal data class LinuxPackageProfile(
 }
 
 internal object LinuxPackageProfiles {
+    /**
+     * 联网安装脚本的统一前缀：加载 chroot 的代理配置。
+     *
+     * chroot 内域名解析不可用——Android 拦明文 DNS，而用户的代理走 VPN/eBPF 只接管
+     * 宿主流量，所以本地 `getaddrinfo` 一律 EAI_AGAIN。凡是联网的包管理（npm/uv）
+     * 都必须走代理，由代理端解析域名。
+     * 用 `if` 而非 `[ -r ] && .`：set -e 下前者安全，后者在文件缺失时会让脚本直接退出。
+     */
+    const val PROXY_BOOTSTRAP_SHELL =
+        "if [ -r /etc/profile.d/99eta-proxy.sh ]; then . /etc/profile.d/99eta-proxy.sh; fi\n"
+
     private const val UV_PYTHON_SETUP_SCRIPT =
-        "UV_PYTHON_INSTALL_DIR=/opt/eta/python UV_PYTHON_BIN_DIR=/usr/local/bin " +
+        PROXY_BOOTSTRAP_SHELL +
+            "UV_PYTHON_INSTALL_DIR=/opt/eta/python UV_PYTHON_BIN_DIR=/usr/local/bin " +
             "UV_PYTHON_INSTALL_BIN=1 uv python install --default --force"
 
     private const val SSH_KEYGEN_SETUP_SCRIPT = "ssh-keygen -A >/dev/null 2>&1 || true"
@@ -123,7 +135,8 @@ internal object LinuxPackageProfiles {
      * 与 Node 归档自身的 prefix 无关。国内镜像优先，官方 registry 兜底。
      */
     private const val KIMI_INSTALL_SCRIPT =
-        "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com " +
+        PROXY_BOOTSTRAP_SHELL +
+            "npm install -g --prefix /usr/local --registry=https://registry.npmmirror.com " +
             "@moonshot-ai/kimi-code@latest || " +
             "npm install -g --prefix /usr/local @moonshot-ai/kimi-code@latest"
 
@@ -155,7 +168,8 @@ internal object LinuxPackageProfiles {
      * 被当成成功。
      */
     private const val DSH_INSTALL_SCRIPT =
-        "npm install -g --prefix /usr/local $DSH_MIRROR_REGISTRY " +
+        PROXY_BOOTSTRAP_SHELL +
+            "npm install -g --prefix /usr/local $DSH_MIRROR_REGISTRY " +
             "@deepseek-ai/dsh@latest || {\n" +
             "echo 'eta: dsh install failed; adding build toolchain for koffi and retrying'\n" +
             "if [ -x /usr/local/bin/eta-apt ]; then /usr/local/bin/eta-apt install cmake build-essential; fi\n" +
