@@ -62,6 +62,12 @@ android {
         debug {
             isMinifyEnabled = false
             isPseudoLocalesEnabled = true
+            // 二改：并行安装用。加 -PetaDevSuffix 时包名变 io.github.mangi.eta.dev，
+            // 与已装官方版共存，不必卸载、不丢数据。
+            if (providers.gradleProperty("etaDevSuffix").isPresent) {
+                applicationIdSuffix = ".dev"
+                versionNameSuffix = "-dev"
+            }
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
