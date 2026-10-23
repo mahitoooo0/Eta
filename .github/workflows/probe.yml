@@ -1,0 +1,16 @@
+name: ci-write-probe
+on:
+  push:
+    branches: [ci/probe-20261023]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 探针
+        run: |
+          echo "ci-write-ok $(date -u +%FT%TZ)"
+          echo "runner=$RUNNER_OS $RUNNER_ARCH"
